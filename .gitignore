@@ -5,3 +5,6 @@ config/
 *.log
 .env
 logs/
+srv.pid
+*.tmp.mjs
+*.tmp.sh
