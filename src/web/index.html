@@ -108,9 +108,17 @@
       <h2>実行状況</h2>
       <p class="hint">進み具合がここに表示されます。長い処理は「中止」で安全に止められます。</p>
       <div id="log"></div>
+      <div id="lastError" class="warnbox hidden"></div>
       <div class="row" style="margin-top:10px">
         <button class="btn danger small" id="btnCancel" disabled>中止</button>
+        <button class="btn ghost small" id="btnShowLog">エラーの記録を見る</button>
         <span class="muted" id="jobInfo"></span>
+      </div>
+      <div id="logFileBox" class="hidden" style="margin-top:12px">
+        <p class="hint" id="logFilePath" style="margin:0 0 6px"></p>
+        <div id="logFile" style="background:var(--bg);border:1px solid var(--line);border-radius:8px;
+             padding:10px;max-height:240px;overflow:auto;font-family:Consolas,monospace;
+             font-size:12px;white-space:pre-wrap"></div>
       </div>
     </div>
     <div class="card">
@@ -293,7 +301,14 @@ async function refresh() {
   const active = STATE.accounts.find((a) => a.active);
   $('#accountBadge').textContent = '使用中: ' + (active ? (active.label || active.username) : '手動ログイン');
   setRunning(STATE.job.running, STATE.job.name);
-  $('#jobInfo').textContent = STATE.job.running ? '' : (STATE.job.error ? '前回: 失敗' : '');
+  $('#jobInfo').textContent = '';
+  const errBox = $('#lastError');
+  if (!STATE.job.running && STATE.job.error) {
+    errBox.textContent = `⚠️ 前回の「${STATE.job.name ?? '処理'}」は失敗しました: ${STATE.job.error}`;
+    errBox.classList.remove('hidden');
+  } else {
+    errBox.classList.add('hidden');
+  }
 
   // ホーム
   const get = (k) => s.options.find((o) => o.key === k);
@@ -374,8 +389,21 @@ $('#btnScrape').onclick = async () => {
   try { await api('/api/run/scrape', { tabs }); } catch (e) { toast(e.message, 'err'); }
 };
 $('#btnCancel').onclick = () => api('/api/cancel', {}).catch(() => {});
+$('#btnShowLog').onclick = async () => {
+  const box = $('#logFileBox');
+  if (!box.classList.contains('hidden')) { box.classList.add('hidden'); return; }
+  try {
+    const r = await api('/api/log');
+    $('#logFilePath').textContent = `記録ファイル: ${r.path}`;
+    $('#logFile').textContent = r.text || '(まだ記録はありません)';
+    box.classList.remove('hidden');
+  } catch (e) { toast(e.message, 'err'); }
+};
 $('#btnShutdown').onclick = async () => {
-  if (!confirm('アプリを終了しますか？')) return;
+  const msg = STATE?.job?.running
+    ? `「${STATE.job.name}」を実行中です。\n中止して終了しますか？（ここまでの結果は保存されます）`
+    : 'アプリを終了しますか？';
+  if (!confirm(msg)) return;
   await api('/api/shutdown', {}).catch(() => {});
   document.body.innerHTML = '<div style="padding:40px;font-size:16px">終了しました。このタブは閉じて大丈夫です。</div>';
 };

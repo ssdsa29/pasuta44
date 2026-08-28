@@ -20,6 +20,7 @@ import {
   OPTION_SCHEMA, formatOption, parseOption, warnFor, applyOptions, setOption,
 } from './settings.js';
 import { runJob, subscribe, getState, cancelJob, log } from './jobs.js';
+import { writeLog, readRecentLog, logPath } from './logger.js';
 
 const WEB_DIR = join(fileURLToPath(new URL('.', import.meta.url)), 'web');
 const MIME = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.json': 'application/json; charset=utf-8', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.gif': 'image/gif', '.csv': 'text/csv; charset=utf-8' };
@@ -273,6 +274,9 @@ async function handleApi(req, res, url) {
     return;
   }
 
+  // エラーの記録を画面に返す(GET)
+  if (path === '/api/log') return json(res, { path: resolve(logPath), text: readRecentLog(400) });
+
   if (req.method !== 'POST') return json(res, { error: 'not found' }, 404);
   const body = await readBody(req);
 
@@ -391,12 +395,10 @@ async function handleApi(req, res, url) {
 
   if (path === '/api/shutdown') {
     json(res, { ok: true });
-    setTimeout(async () => {
-      await closeAll(multiViews).catch(() => {});
-      process.exit(0);
-    }, 300);
+    setTimeout(() => shutdown('画面の終了ボタン'), 300);
     return;
   }
+
 
   return json(res, { error: 'not found' }, 404);
 }
@@ -420,7 +422,49 @@ async function serveOutputFile(res, urlPath) {
   }
 }
 
+// 終了処理。ブラウザを閉じてログイン状態を保存してから落とす。
+let shuttingDown = false;
+async function shutdown(reason, code = 0) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  writeLog(`終了します(${reason})`);
+  try {
+    if (getState().running) {
+      cancelJob();
+      // 実行中の処理が区切りまで進むのを少しだけ待つ
+      for (let i = 0; i < 20 && getState().running; i++) await new Promise((r) => setTimeout(r, 250));
+    }
+    // 同時表示のウィンドウはログイン状態を保存してから閉じる
+    await closeAll(multiViews);
+    multiViews = [];
+  } catch (err) {
+    writeLog(`終了処理でエラー: ${cleanError(err)}`, 'warn');
+  }
+  process.exit(code);
+}
+
+// 予期しないエラーでも、記録を残してアプリは動かし続ける
+function installErrorHandlers() {
+  process.on('uncaughtException', (err) => {
+    writeLog(`想定外のエラー: ${err?.stack || err}`, 'error');
+    log(`想定外のエラーが発生しました: ${cleanError(err)}(記録: ${logPath})`, 'error');
+  });
+  process.on('unhandledRejection', (reason) => {
+    writeLog(`処理されなかったエラー: ${reason?.stack || reason}`, 'error');
+    log(`エラーが発生しました: ${cleanError(reason)}(記録: ${logPath})`, 'error');
+  });
+  // Ctrl+C、ウィンドウを閉じる、タスク終了 のいずれでも後片付けしてから終わる
+  for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP', 'SIGBREAK']) {
+    try {
+      process.on(sig, () => shutdown(sig));
+    } catch {
+      // その環境にないシグナルは無視
+    }
+  }
+}
+
 export async function startServer({ port = 0, open = true } = {}) {
+  installErrorHandlers();
   const server = createServer(async (req, res) => {
     const url = new URL(req.url, 'http://127.0.0.1');
     try {
@@ -441,6 +485,7 @@ export async function startServer({ port = 0, open = true } = {}) {
       res.writeHead(200, { 'Content-Type': MIME[extname(target).toLowerCase()] ?? 'text/plain; charset=utf-8' });
       res.end(data);
     } catch (err) {
+      writeLog(`リクエスト処理でエラー (${url.pathname}): ${err?.stack || err}`, 'error');
       if (!res.headersSent) json(res, { error: cleanError(err) }, 500);
       else res.end();
     }
@@ -453,6 +498,8 @@ export async function startServer({ port = 0, open = true } = {}) {
   console.log(' X タイムライン自動収集ツール');
   console.log('======================================');
   console.log(`操作画面: ${url}`);
+  console.log(`記録ファイル: ${resolve(logPath)}`);
+  writeLog(`起動しました(${url})`);
   console.log('(このウィンドウは開いたままにしてください。終了は画面の「終了」ボタンです)');
   if (open) openInBrowser(url);
   return { server, url, port: actualPort };

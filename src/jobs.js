@@ -2,6 +2,7 @@
 // 同時に走る処理は1つだけにして、途中経過をログとして配信します。
 import { requestCancel, resetCancel, isCancelled } from './cancel.js';
 import { cleanError } from './resilience.js';
+import { writeLog } from './logger.js';
 
 const MAX_LOG_LINES = 500;
 
@@ -22,6 +23,8 @@ function emit(type, payload) {
   if (type === 'log') {
     state.logs.push(event);
     if (state.logs.length > MAX_LOG_LINES) state.logs.shift();
+    // 注意・エラーは、あとから確認できるようファイルにも残す
+    if (payload.level === 'warn' || payload.level === 'error') writeLog(payload.text, payload.level);
   }
   for (const send of listeners) {
     try {
@@ -90,16 +93,19 @@ export async function runJob(name, fn) {
   state.result = null;
   state.error = null;
   resetCancel();
+  writeLog(`${name} を開始しました`);
   emit('start', { name });
 
   const restore = captureConsole();
   try {
     const result = await fn();
     state.result = result ?? null;
+    writeLog(`${name} が${isCancelled() ? '中止されました' : '完了しました'}`);
     emit('done', { name, result: state.result, cancelled: isCancelled() });
     return result;
   } catch (err) {
     state.error = cleanError(err);
+    writeLog(`${name} が失敗しました: ${err?.stack || err}`, 'error');
     emit('failed', { name, error: state.error });
     throw err;
   } finally {

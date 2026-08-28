@@ -115,6 +115,38 @@ const es = await fetch(url + 'api/events', { headers: { Accept: 'text/event-stre
 check('進捗の配信につながる', es.status === 200 && es.headers.get('content-type').includes('event-stream'));
 es.body.cancel();
 
+
+console.log('\n[H] エラーの記録');
+const { writeLog, readRecentLog } = await import(new URL('../src/logger.js', import.meta.url).href);
+writeLog('テストの記録です');
+writeLog('テストの警告です', 'warn');
+writeLog('テストのエラーです', 'error');
+check('記録ファイルが作られる', existsSync(join(work, 'logs', 'app.log')));
+const logText = readRecentLog(50);
+check('情報・注意・エラーが区別して残る',
+  logText.includes('[情報] テストの記録です') && logText.includes('[注意]') && logText.includes('[エラー]'));
+check('日時が入っている', /\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\]/.test(logText));
+
+r = await api('/api/log');
+check('画面から記録を読める', r.status === 200 && String(r.data.text ?? '').includes('テストのエラーです'));
+check('記録ファイルの場所が分かる', String(r.data.path ?? '').endsWith('app.log'));
+
+console.log('\n[I] 想定外のエラーでもアプリが落ちない');
+// 実際に捕捉されない例外を投げてみる
+process.emit('uncaughtException', new Error('わざと起こしたエラー'));
+process.emit('unhandledRejection', new Error('わざと起こした未処理エラー'));
+await new Promise((res) => setTimeout(res, 200));
+r = await api('/api/state');
+check('例外のあともサーバーが応答する', r.status === 200);
+check('例外が記録に残る', readRecentLog(80).includes('わざと起こしたエラー'));
+
+console.log('\n[J] ジョブの失敗が記録に残る');
+await api('/api/run/migrate', {});
+await new Promise((res) => setTimeout(res, 400));
+check('失敗したジョブが記録される', readRecentLog(80).includes('アカウント移植 が失敗しました'));
+r = await api('/api/state');
+check('画面に前回の失敗が残る', typeof r.data.job.error === 'string' && r.data.job.error.length > 0);
+
 server.close();
 rmSync(work, { recursive: true, force: true });
 console.log(`\n=== 画面サーバー: ${pass} 件成功 / ${fail} 件失敗 ===`);
