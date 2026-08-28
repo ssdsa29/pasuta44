@@ -24,11 +24,8 @@ export const CONFIG = {
   // キーワード絞り込み(空配列ならすべて取得。いずれかを含む投稿のみ収集)
   keywords: [],
 
-  // 認証状態の保存先
+  // 認証状態の保存先(既定。ログインアカウントごとに別ファイルになります)
   authStatePath: 'auth/state.json',
-
-  // 取得済み投稿IDの記録先
-  seenStorePath: 'output/seen.json',
 
   // 出力先ディレクトリ
   outputDir: 'output',

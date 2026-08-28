@@ -1,16 +1,84 @@
-// 初回セットアップ用: ブラウザを開いて手動でXにログインし、セッションを保存します。
-// 実行: npm run login (npm start からも自動で呼ばれます)
+// Xへのログインを行い、セッション(Cookie)を保存します。
+//  - アカウント情報(パスワード)が登録済みなら自動ログインを試みます
+//  - 未登録、または自動ログインが確認画面などで止まったら、手動ログインに切り替わります
 import { chromium } from 'playwright';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { CONFIG } from './config.js';
+import { authStatePathFor, getActiveAccount, loadSettings } from './settings.js';
+import { humanType, humanPause, sleep } from './humanize.js';
 
-const LOGIN_TIMEOUT_MS = 5 * 60 * 1000; // 5分以内にログインしてください
+const LOGIN_TIMEOUT_MS = 5 * 60 * 1000; // 手動ログインは5分以内に
 
-export async function login() {
+// ログイン完了(ホームのタイムライン表示)を待つ
+async function waitForLoggedIn(page, timeout) {
+  await page.waitForSelector(
+    '[data-testid="primaryColumn"] [data-testid="tweet"], [data-testid="SideNav_AccountSwitcher_Button"]',
+    { timeout }
+  );
+}
+
+// アカウント情報を使って自動ログインを試みる。成功可否を返す。
+async function tryAutoLogin(page, account) {
+  try {
+    await page.goto('https://x.com/i/flow/login', { waitUntil: 'domcontentloaded' });
+    await humanPause(1000, 2500);
+
+    // 1) ユーザー名/メール/電話
+    await page.waitForSelector('input[name="text"]', { timeout: 30000 });
+    await humanType(page, 'input[name="text"]', account.username);
+    await clickNext(page);
+    await humanPause(1200, 2500);
+
+    // 追加の本人確認(ユーザー名の再入力を求められる場合)
+    const extra = page.locator('input[data-testid="ocfEnterTextTextInput"], input[name="text"]');
+    if ((await extra.count()) > 0 && (await page.locator('input[name="password"]').count()) === 0) {
+      await extra.first().fill('');
+      await humanType(page, 'input[data-testid="ocfEnterTextTextInput"], input[name="text"]', account.username);
+      await clickNext(page);
+      await humanPause(1200, 2500);
+    }
+
+    // 2) パスワード
+    await page.waitForSelector('input[name="password"]', { timeout: 30000 });
+    await humanType(page, 'input[name="password"]', account.password);
+    // ログインボタン
+    const loginBtn = page.locator('[data-testid="LoginForm_Login_Button"]');
+    await loginBtn.click();
+
+    // 3) ログイン完了 or 2段階認証などの追加画面を判定
+    try {
+      await waitForLoggedIn(page, 30000);
+      return true;
+    } catch {
+      // 2段階認証・キャプチャ等が出た可能性 → 手動対応に切り替え
+      console.log('追加の認証が必要なようです。ブラウザで操作を完了してください...');
+      await waitForLoggedIn(page, LOGIN_TIMEOUT_MS);
+      return true;
+    }
+  } catch (err) {
+    console.warn(`自動ログインに失敗しました: ${err.message}`);
+    return false;
+  }
+}
+
+async function clickNext(page) {
+  // 「次へ」ボタン(日本語/英語UI)。testid が無い場合はテキストで探す。
+  const byRole = page.getByRole('button', { name: /次へ|Next/ });
+  if ((await byRole.count()) > 0) {
+    await byRole.first().click();
+    return;
+  }
+  await page.keyboard.press('Enter');
+}
+
+// メインのログイン処理。account を渡すと自動ログインを試みる。
+export async function login({ account = null, authStatePath = null, headless = false } = {}) {
+  const statePath = authStatePath || CONFIG.authStatePath;
   const browser = await chromium.launch({
-    headless: false,
+    // 自動ログインでも、確認画面が出たら人が操作できるよう既定は表示する
+    headless,
     executablePath: process.env.CHROMIUM_PATH || undefined,
   });
   const context = await browser.newContext({
@@ -19,28 +87,37 @@ export async function login() {
   });
   const page = await context.newPage();
 
-  console.log('ブラウザが開きます。Xにログインしてください...');
-  await page.goto('https://x.com/login');
-
-  // ホームのタイムラインが表示されたらログイン完了とみなす
-  try {
-    await page.waitForSelector('[data-testid="primaryColumn"] [data-testid="tweet"], [data-testid="SideNav_AccountSwitcher_Button"]', {
-      timeout: LOGIN_TIMEOUT_MS,
-    });
-  } catch {
-    await browser.close();
-    throw new Error('ログインがタイムアウトしました。もう一度実行してください。');
+  let success = false;
+  if (account && account.password) {
+    console.log(`アカウント「${account.label || account.username}」で自動ログインを試みます...`);
+    success = await tryAutoLogin(page, account);
   }
 
-  mkdirSync(dirname(CONFIG.authStatePath), { recursive: true });
-  await context.storageState({ path: CONFIG.authStatePath });
-  console.log(`ログイン状態を ${CONFIG.authStatePath} に保存しました。`);
+  if (!success) {
+    console.log('手動でXにログインしてください(ブラウザが開いています)...');
+    await page.goto('https://x.com/login').catch(() => {});
+    try {
+      await waitForLoggedIn(page, LOGIN_TIMEOUT_MS);
+      success = true;
+    } catch {
+      await browser.close();
+      throw new Error('ログインがタイムアウトしました。もう一度お試しください。');
+    }
+  }
+
+  mkdirSync(dirname(statePath), { recursive: true });
+  await context.storageState({ path: statePath });
+  console.log(`ログイン状態を ${statePath} に保存しました。`);
+  await sleep(500);
   await browser.close();
+  return statePath;
 }
 
-// 直接実行されたときだけCLIとして動く
+// 直接実行(npm run login): 使用中アカウントでログイン
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  login()
+  const settings = loadSettings();
+  const account = getActiveAccount(settings);
+  login({ account, authStatePath: authStatePathFor(account) })
     .then(() => console.log('次は npm start で収集を開始できます。'))
     .catch((err) => {
       console.error(err.message ?? err);

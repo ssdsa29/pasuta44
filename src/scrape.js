@@ -9,6 +9,7 @@ import { pathToFileURL } from 'node:url';
 import { CONFIG } from './config.js';
 import { extractTweetsInPage, toOriginalImageUrl, imageExtension } from './extract.js';
 import { generateReport } from './report.js';
+import { humanScroll, humanPause } from './humanize.js';
 
 function parseArgs() {
   const args = process.argv.slice(2);
@@ -22,30 +23,24 @@ function parseArgs() {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-// 検出対策として待機時間に±50%の揺らぎを入れる
-function jitteredDelay() {
-  const base = CONFIG.scrollDelayMs;
-  return sleep(base * (0.5 + Math.random()));
-}
-
 function sanitize(name) {
   return name.replace(/[^\w.-]/g, '_');
 }
 
 // 過去の実行で取得済みの投稿IDを読み書きする(差分取得用)
-function loadSeenIds() {
+function loadSeenIds(seenPath) {
   if (!CONFIG.skipSeen) return new Set();
   try {
-    return new Set(JSON.parse(readFileSync(CONFIG.seenStorePath, 'utf8')));
+    return new Set(JSON.parse(readFileSync(seenPath, 'utf8')));
   } catch {
     return new Set();
   }
 }
 
-function saveSeenIds(seenIds) {
+function saveSeenIds(seenIds, seenPath) {
   if (!CONFIG.skipSeen) return;
-  mkdirSync(dirname(CONFIG.seenStorePath), { recursive: true });
-  writeFileSync(CONFIG.seenStorePath, JSON.stringify([...seenIds]), 'utf8');
+  mkdirSync(dirname(seenPath), { recursive: true });
+  writeFileSync(seenPath, JSON.stringify([...seenIds]), 'utf8');
 }
 
 function matchesKeywords(text) {
@@ -96,8 +91,8 @@ async function collectFromTimeline(page, seenIds) {
     const tweetsFull = [...byAccount.values()].every((a) => a.tweets.size >= CONFIG.maxTweetsPerAccount);
     if (accountsFull && tweetsFull) break;
 
-    await page.mouse.wheel(0, 2500);
-    await jitteredDelay();
+    // 人間らしく少しずつスクロール(たまに戻る・止まって読む)
+    await humanScroll(page);
   }
 
   return byAccount;
@@ -108,7 +103,7 @@ async function fetchReplies(page, tweet) {
   try {
     await page.goto(tweet.url, { waitUntil: 'domcontentloaded' });
     await page.waitForSelector('article[data-testid="tweet"]', { timeout: 20000 });
-    await sleep(2000);
+    await humanPause(1500, 3000);
 
     const replies = [];
     const seen = new Set([tweet.tweetId]);
@@ -129,8 +124,7 @@ async function fetchReplies(page, tweet) {
         }
       }
       if (replies.length >= CONFIG.maxRepliesPerTweet) break;
-      await page.mouse.wheel(0, 2000);
-      await jitteredDelay();
+      await humanScroll(page);
     }
     return replies;
   } catch (err) {
@@ -210,7 +204,7 @@ async function scrapeTab(page, tabKey, runDir, seenIds) {
 
       tweets.push(record);
       seenIds.add(tweet.tweetId);
-      await jitteredDelay();
+      await humanPause(1200, 3000);
     }
 
     const accountData = { handle, displayName: account.displayName, dirName, tab: tabKey, tweets };
@@ -226,25 +220,33 @@ async function scrapeTab(page, tabKey, runDir, seenIds) {
 
 // 収集の本体。overrides で CONFIG の値を上書きできる(対話モードから利用)。
 // 戻り値: { runDir, htmlPath, csvPath, totalAccounts }
-export async function runScrape({ tabs = ['recommend', 'following'], overrides = {} } = {}) {
+export async function runScrape({
+  tabs = ['recommend', 'following'],
+  overrides = {},
+  authStatePath = null,
+  outputDir = null,
+} = {}) {
   Object.assign(CONFIG, overrides);
+  const statePath = authStatePath || CONFIG.authStatePath;
+  const outDir = outputDir || CONFIG.outputDir;
 
-  if (!existsSync(CONFIG.authStatePath)) {
-    throw new Error(`認証情報 (${CONFIG.authStatePath}) が見つかりません。先に npm run login を実行してください。`);
+  if (!existsSync(statePath)) {
+    throw new Error(`認証情報 (${statePath}) が見つかりません。先にログインしてください。`);
   }
 
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-  const runDir = join(CONFIG.outputDir, timestamp);
+  const runDir = join(outDir, timestamp);
   mkdirSync(runDir, { recursive: true });
 
-  const seenIds = loadSeenIds();
+  const seenPath = join(outDir, 'seen.json');
+  const seenIds = loadSeenIds(seenPath);
   const browser = await chromium.launch({
     headless: CONFIG.headless,
     // 通常は自動検出。環境変数 CHROMIUM_PATH でブラウザ実行ファイルを指定可能
     executablePath: process.env.CHROMIUM_PATH || undefined,
   });
   const context = await browser.newContext({
-    storageState: CONFIG.authStatePath,
+    storageState: statePath,
     locale: 'ja-JP',
     viewport: { width: 1280, height: 900 },
   });
@@ -256,9 +258,9 @@ export async function runScrape({ tabs = ['recommend', 'following'], overrides =
       dataByTab[tabKey] = await scrapeTab(page, tabKey, runDir, seenIds);
     }
   } finally {
-    saveSeenIds(seenIds);
+    saveSeenIds(seenIds, seenPath);
     // 次回もログイン状態を使い回せるよう、セッションを更新して保存
-    await context.storageState({ path: CONFIG.authStatePath }).catch(() => {});
+    await context.storageState({ path: statePath }).catch(() => {});
     await browser.close();
   }
 
