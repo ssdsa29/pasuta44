@@ -15,6 +15,15 @@ export const CONFIG = {
   // タイムラインをスクロールする最大回数(無限ループ防止)
   maxScrolls: 30,
 
+  // --- 安全なフォロー移植の設定 ---
+  // 1回の実行でフォローする最大件数(多すぎるとBANリスク。控えめ推奨)
+  maxFollowsPerRun: 20,
+  // フォロー1件ごとの待機時間(ミリ秒)。この範囲でランダムに待ちます
+  followDelayMinMs: 25000, // 25秒
+  followDelayMaxMs: 60000, // 60秒
+  // フォロー中一覧の最大取得件数
+  maxFollowingExport: 1000,
+
   // スクロール間の待機時間(ミリ秒)。ランダムに±50%揺らぎます
   scrollDelayMs: 2000,
 

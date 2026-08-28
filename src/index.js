@@ -1,9 +1,12 @@
 // かんたん実行モード(普通のアプリのようなメニュー画面)。
 // start.bat をダブルクリックするか、npm start で起動します。
-//   1. 収集を開始
+//   1. 収集を開始(投稿・画像・コメント)
 //   2. ログインアカウント管理(ユーザー名・パスワードの追加/編集/削除/切替)
 //   3. 保存先フォルダの設定
-//   4. 終了(シャットダウン)
+//   4. フォロー中アカウントを出力
+//   5. おすすめ欄のアカウントを収集
+//   6. アカウントを移植(一覧を安全にフォロー)
+//   7. 終了(シャットダウン)
 import { existsSync } from 'node:fs';
 import { createInterface } from 'node:readline';
 import { stdin, stdout } from 'node:process';
@@ -13,6 +16,8 @@ import { CONFIG } from './config.js';
 import { login } from './login.js';
 import { runScrape } from './scrape.js';
 import { pickFolderDialog } from './pickFolder.js';
+import { exportFollowing, collectRecommendAccounts, followAccounts } from './follows.js';
+import { saveAccountList, listSavedFiles, readHandles } from './lists.js';
 import {
   loadSettings,
   saveSettings,
@@ -163,18 +168,27 @@ async function chooseOutputDir(settings) {
   }
 }
 
-// ---- 収集を開始 ------------------------------------------------------------
-async function startScrape(settings) {
+// 保存先ルート
+function outputRoot(settings) {
+  return settings.outputDir || CONFIG.outputDir;
+}
+
+// 使用中アカウントのセッションを用意する(無ければログイン)。statePath を返す。
+async function ensureSession(settings) {
   const account = getActiveAccount(settings);
   const statePath = authStatePathFor(account);
-
-  // セッションが無ければログイン(パスワード登録済みなら自動、なければ手動)
   if (!existsSync(statePath)) {
     console.log('\nログインが必要です。ブラウザを開きます...');
     if (account) console.log(`使用アカウント: ${account.label || account.username}`);
     else console.log('手動ログインモード(アカウント未登録)');
     await login({ account, authStatePath: statePath });
   }
+  return statePath;
+}
+
+// ---- 収集を開始 ------------------------------------------------------------
+async function startScrape(settings) {
+  const statePath = await ensureSession(settings);
 
   // かんたん設定(Enterで既定値)
   console.log('\n--- 収集設定(Enterで既定値)---');
@@ -203,6 +217,101 @@ async function startScrape(settings) {
   }
 }
 
+// ---- フォロー中アカウントを出力 -------------------------------------------
+async function exportFollowingFlow(settings) {
+  const statePath = await ensureSession(settings);
+  console.log('\n使用中アカウントの「フォロー中」一覧を取得します。少し時間がかかります...');
+  const { owner, accounts } = await exportFollowing(statePath);
+  if (accounts.length === 0) {
+    console.log('フォロー中アカウントが取得できませんでした。');
+    return;
+  }
+  const saved = saveAccountList(outputRoot(settings), `following_${owner}`, accounts, { source: 'following', owner });
+  console.log(`\n${accounts.length} 件を保存しました:`);
+  console.log(`  一覧(移植用): ${saved.txtPath}`);
+  console.log(`  JSON/CSV     : ${saved.jsonPath}`);
+  console.log('この一覧はメニュー「6. アカウントを移植」で別アカウントにフォローできます。');
+}
+
+// ---- おすすめ欄のアカウントを収集 -----------------------------------------
+async function collectRecommendFlow(settings) {
+  const statePath = await ensureSession(settings);
+  const max = parseInt(await askDefault('収集するアカウント数', 50), 10) || 50;
+  console.log('\nおすすめ欄をスクロールしてアカウントを収集します...');
+  const accounts = await collectRecommendAccounts(statePath, { max });
+  if (accounts.length === 0) {
+    console.log('アカウントが取得できませんでした。');
+    return;
+  }
+  const saved = saveAccountList(outputRoot(settings), 'recommend_accounts', accounts, { source: 'recommend' });
+  console.log(`\n${accounts.length} アカウントを保存しました:`);
+  console.log(`  一覧(移植用): ${saved.txtPath}`);
+  console.log(`  JSON/CSV     : ${saved.jsonPath}`);
+  console.log('この一覧はメニュー「6. アカウントを移植」で別アカウントにフォローできます。');
+}
+
+// ---- アカウントを移植(一覧を安全にフォロー)------------------------------
+async function migrateFlow(settings) {
+  // 1) フォロー元の一覧を選ぶ
+  const files = listSavedFiles(outputRoot(settings));
+  let handles = [];
+  console.log('\n--- アカウントの移植(一覧を安全にフォロー)---');
+  if (files.length > 0) {
+    console.log('保存済みの一覧:');
+    files.slice(0, 15).forEach((f, i) => console.log(`  ${i + 1}. ${f.file}`));
+    console.log('  0. 手入力(@handleをスペース/改行区切りで貼り付け)');
+    const pick = (await ask('番号を選択: ')).trim();
+    const idx = parseInt(pick, 10) - 1;
+    if (files[idx]) {
+      handles = readHandles(files[idx].path);
+    } else {
+      const pasted = (await ask('@handle を入力: ')).trim();
+      handles = pasted.split(/[\s,]+/).map((h) => h.replace(/^@/, '')).filter(Boolean);
+    }
+  } else {
+    console.log('保存済みの一覧がありません。先に「5」や「6」で一覧を作成するか、手入力してください。');
+    const pasted = (await ask('@handle を入力(スペース区切り): ')).trim();
+    handles = pasted.split(/[\s,]+/).map((h) => h.replace(/^@/, '')).filter(Boolean);
+  }
+
+  // 重複除去
+  handles = [...new Set(handles)];
+  if (handles.length === 0) {
+    console.log('対象アカウントがありません。');
+    return;
+  }
+
+  // 2) フォローする側(移植先)のアカウントを確認
+  const active = getActiveAccount(settings);
+  console.log(`\nフォローを実行するアカウント(移植先): ${active ? active.label || active.username : '手動ログイン中のアカウント'}`);
+  console.log('別のアカウントに移植したい場合は、一度メニューに戻り「2」で使用アカウントを切り替えてください。');
+  console.log(`対象: ${handles.length} 件 / 1回の上限: ${CONFIG.maxFollowsPerRun} 件 / 間隔: ${CONFIG.followDelayMinMs / 1000}〜${CONFIG.followDelayMaxMs / 1000}秒`);
+  console.log('⚠️ 短時間に大量フォローするとアカウント制限のリスクがあります。安全のため上限と間隔を設けています。');
+
+  const ok = await askYesNo(`このアカウントで最大 ${Math.min(handles.length, CONFIG.maxFollowsPerRun)} 件フォローを実行しますか?`, false);
+  if (!ok) {
+    console.log('中止しました。');
+    return;
+  }
+
+  const statePath = await ensureSession(settings);
+  console.log('\nフォローを開始します(人間らしい間隔で進めます)...');
+  const { follower, results, followedCount } = await followAccounts(statePath, handles, {
+    onProgress: ({ handle, status, followed }) => {
+      const mark = status === 'followed' ? '✓ フォロー' : status === 'already' ? '- 既にフォロー済' : status;
+      console.log(`  [${followed}] @${handle} … ${mark}`);
+    },
+  });
+
+  const counts = results.reduce((m, r) => ((m[r.status] = (m[r.status] || 0) + 1), m), {});
+  console.log(`\n完了しました(実行アカウント: @${follower || '?'})`);
+  console.log(`  新規フォロー: ${followedCount} 件`);
+  console.log(`  内訳: ${JSON.stringify(counts)}`);
+  if (handles.length > CONFIG.maxFollowsPerRun) {
+    console.log(`  ※ 上限(${CONFIG.maxFollowsPerRun}件)に達した分は残っています。時間をおいて再実行すると続きをフォローします(既フォロー分は自動スキップ)。`);
+  }
+}
+
 // ---- メインメニュー --------------------------------------------------------
 async function main() {
   console.log('======================================');
@@ -216,10 +325,13 @@ async function main() {
     console.log('\n==== メニュー ====');
     console.log(`  使用アカウント: ${active ? active.label || active.username : '手動ログイン'}`);
     console.log(`  保存先: ${settings.outputDir || `${CONFIG.outputDir}(既定)`}`);
-    console.log('  1. 収集を開始');
+    console.log('  1. 収集を開始(投稿・画像・コメント)');
     console.log('  2. ログインアカウント管理');
     console.log('  3. 保存先フォルダの設定');
-    console.log('  4. 終了');
+    console.log('  4. フォロー中アカウントを出力');
+    console.log('  5. おすすめ欄のアカウントを収集');
+    console.log('  6. アカウントを移植(一覧を安全にフォロー)');
+    console.log('  7. 終了');
     const choice = (await ask('番号を入力: ')).trim();
 
     try {
@@ -229,11 +341,17 @@ async function main() {
         await manageAccounts(settings);
       } else if (choice === '3') {
         await chooseOutputDir(settings);
-      } else if (choice === '4' || choice.toLowerCase() === 'q' || inputClosed) {
+      } else if (choice === '4') {
+        await exportFollowingFlow(settings);
+      } else if (choice === '5') {
+        await collectRecommendFlow(settings);
+      } else if (choice === '6') {
+        await migrateFlow(settings);
+      } else if (choice === '7' || choice.toLowerCase() === 'q' || inputClosed) {
         console.log('終了します。お疲れさまでした。');
         break;
       } else {
-        console.log('1〜4 の番号を入力してください。');
+        console.log('1〜7 の番号を入力してください。');
       }
     } catch (err) {
       console.error(`\nエラー: ${err.message ?? err}`);

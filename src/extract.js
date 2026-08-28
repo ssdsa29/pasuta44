@@ -51,6 +51,36 @@ export function extractTweetsInPage() {
   return results;
 }
 
+// ユーザー一覧(フォロー中・フォロワー・おすすめユーザー)のセルから
+// アカウント情報を抽出する(page.evaluate に渡す)
+export function extractUserCellsInPage() {
+  const cells = document.querySelectorAll('[data-testid="UserCell"]');
+  const results = [];
+  for (const cell of cells) {
+    // @handle(@から始まるspan)を探す
+    let handle = null;
+    for (const s of cell.querySelectorAll('span')) {
+      const t = s.textContent && s.textContent.trim();
+      if (t && /^@[A-Za-z0-9_]+$/.test(t)) {
+        handle = t.slice(1);
+        break;
+      }
+    }
+    if (!handle) continue;
+
+    // 表示名(プロフィールリンクのテキスト先頭行)
+    let displayName = null;
+    const nameLink = cell.querySelector(`a[href="/${handle}"]`);
+    if (nameLink) {
+      const first = (nameLink.innerText || '').split('\n')[0].trim();
+      if (first && !first.startsWith('@')) displayName = first;
+    }
+
+    results.push({ handle, displayName });
+  }
+  return results;
+}
+
 // 画像URLを最高画質(orig)に変換する
 export function toOriginalImageUrl(src) {
   try {
