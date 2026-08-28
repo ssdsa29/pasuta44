@@ -1,4 +1,6 @@
-// 設定ファイル: 必要に応じて値を変更してください
+// 既定の設定値。
+// アプリのメニュー「設定」から変更でき、変更内容は config/settings.json に保存されます。
+// (このファイルは既定値の定義なので、通常は編集不要です)
 export const CONFIG = {
   // 収集するユニークアカウント数(タブごと)
   maxAccounts: 10,
@@ -11,6 +13,9 @@ export const CONFIG = {
 
   // 1投稿あたり取得する最大リプライ数
   maxRepliesPerTweet: 10,
+
+  // 「おすすめ欄のアカウントを収集」で集めるアカウント数
+  maxRecommendAccounts: 50,
 
   // タイムラインをスクロールする最大回数(無限ループ防止)
   maxScrolls: 30,
@@ -30,8 +35,8 @@ export const CONFIG = {
   // フォロー中一覧の最大取得件数
   maxFollowingExport: 1000,
 
-  // スクロール間の待機時間(ミリ秒)。ランダムに±50%揺らぎます
-  scrollDelayMs: 2000,
+  // 動作の速さ(待機時間の倍率)。1.0=標準、小さいほど速く、大きいほど慎重(安全)
+  speedFactor: 1.0,
 
   // 過去の実行で取得済みの投稿をスキップするか(差分取得)
   skipSeen: true,

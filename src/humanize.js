@@ -1,7 +1,13 @@
 // スクレイピング検知(BAN)を避けるため、人間に近い操作を行うヘルパー群。
 // ランダムな待機・少しずつのスクロール・たまに戻る・マウス移動・1文字ずつのタイプ入力など。
+// 待機時間はすべて CONFIG.speedFactor 倍されます(設定メニューの「動作の速さ」)。
+import { CONFIG } from './config.js';
 
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// 設定の「動作の速さ」を反映した待機
+const scaled = (ms) => Math.round(ms * (CONFIG.speedFactor ?? 1));
+export const paceSleep = (ms) => sleep(scaled(ms));
 
 // min〜max の乱数(整数)
 export function randInt(min, max) {
@@ -12,7 +18,7 @@ export function randInt(min, max) {
 export async function humanPause(minMs = 400, maxMs = 1600) {
   let ms = randInt(minMs, maxMs);
   if (Math.random() < 0.15) ms += randInt(800, 2500); // たまに長考
-  await sleep(ms);
+  await sleep(scaled(ms));
 }
 
 // マウスを画面内のランダムな位置へ、複数ステップで滑らかに動かす
@@ -32,13 +38,13 @@ export async function humanScroll(page, viewport = { width: 1280, height: 900 })
   for (let i = 0; i < steps; i++) {
     const delta = randInt(250, 600);
     await page.mouse.wheel(0, delta);
-    await sleep(randInt(150, 450));
+    await paceSleep(randInt(150, 450));
   }
 
   // たまに少し上に戻る(読み返す動き)
   if (Math.random() < 0.2) {
     await page.mouse.wheel(0, -randInt(150, 350));
-    await sleep(randInt(300, 800));
+    await paceSleep(randInt(300, 800));
   }
 
   // ときどきマウスを動かす
@@ -54,8 +60,8 @@ export async function humanType(page, selector, text) {
   await humanPause(200, 600);
   for (const ch of text) {
     await page.keyboard.type(ch);
-    await sleep(randInt(60, 180));
-    if (Math.random() < 0.05) await sleep(randInt(200, 500)); // たまに手が止まる
+    await paceSleep(randInt(60, 180));
+    if (Math.random() < 0.05) await paceSleep(randInt(200, 500)); // たまに手が止まる
   }
   await humanPause(300, 800);
 }

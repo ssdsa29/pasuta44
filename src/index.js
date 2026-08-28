@@ -2,11 +2,11 @@
 // start.bat をダブルクリックするか、npm start で起動します。
 //   1. 収集を開始(投稿・画像・コメント)
 //   2. ログインアカウント管理(ユーザー名・パスワードの追加/編集/削除/切替)
-//   3. 保存先フォルダの設定
-//   4. フォロー中アカウントを出力
-//   5. おすすめ欄のアカウントを収集
-//   6. アカウントを移植(一覧を安全にフォロー)
-//   7. 複数アカウント同時表示(マルチビュー)
+//   3. フォロー中アカウントを出力
+//   4. おすすめ欄のアカウントを収集
+//   5. アカウントを移植(一覧を安全にフォロー)
+//   6. 複数アカウント同時表示(マルチビュー)
+//   7. 設定(保存先・収集・フォロー・表示のすべてをここで変更)
 //   8. 終了(シャットダウン)
 import { existsSync } from 'node:fs';
 import { createInterface } from 'node:readline';
@@ -35,6 +35,12 @@ import {
   getActiveAccount,
   authStatePathFor,
   accountDisplayName,
+  OPTION_SCHEMA,
+  formatOption,
+  parseOption,
+  warnFor,
+  applyOptions,
+  setOption,
 } from './settings.js';
 
 // 入力を行キューで管理する(パイプ実行でも1行も取りこぼさないため)。
@@ -148,11 +154,11 @@ async function manageAccounts(settings) {
   }
 }
 
-// ---- 保存先フォルダの設定 --------------------------------------------------
-async function chooseOutputDir(settings) {
-  console.log('\n--- 保存先フォルダの設定 ---');
-  console.log(`現在の保存先: ${settings.outputDir || `${CONFIG.outputDir}(既定)`}`);
-  console.log('  1=フォルダ選択ダイアログを開く  2=手入力  3=既定に戻す  b=戻る');
+// ---- 設定 ------------------------------------------------------------------
+// 保存先フォルダの変更(ダイアログ / 手入力 / 既定に戻す)
+async function editOutputDir(settings) {
+  console.log(`\n現在の保存先: ${settings.outputDir || `${CONFIG.outputDir}(既定)`}`);
+  console.log('  1=フォルダ選択ダイアログ  2=手入力  3=既定に戻す  b=戻る');
   const choice = (await ask('選択: ')).trim().toLowerCase();
 
   if (choice === '1') {
@@ -160,22 +166,116 @@ async function chooseOutputDir(settings) {
     const picked = await pickFolderDialog();
     if (picked) {
       settings.outputDir = picked;
-      saveSettings(settings);
-      console.log(`保存先を ${picked} に設定しました。`);
+      console.log(`保存先を ${picked} にしました。`);
     } else {
-      console.log('選択がキャンセルされたか、ダイアログを開けませんでした。手入力をお試しください。');
+      console.log('キャンセルされたか、ダイアログを開けませんでした。「2=手入力」をお試しください。');
+      return false;
     }
   } else if (choice === '2') {
     const p = (await ask('保存先フォルダのフルパス: ')).trim();
-    if (p) {
-      settings.outputDir = p;
-      saveSettings(settings);
-      console.log(`保存先を ${p} に設定しました。`);
-    }
+    if (!p) return false;
+    settings.outputDir = p;
+    console.log(`保存先を ${p} にしました。`);
   } else if (choice === '3') {
     settings.outputDir = '';
-    saveSettings(settings);
     console.log('保存先を既定に戻しました。');
+  } else {
+    return false;
+  }
+  saveSettings(settings);
+  applyOptions(settings, CONFIG);
+  return true;
+}
+
+// 1項目を編集する
+async function editOption(settings, opt) {
+  const current = formatOption(opt, CONFIG[opt.key]);
+  console.log(`\n【${opt.label}】`);
+  console.log(`  現在の値: ${current}`);
+
+  let hint;
+  if (opt.type === 'boolean') hint = 'はい(y) / いいえ(n)';
+  else if (opt.type === 'keywords') hint = 'スペース区切り。「なし」で絞り込み解除';
+  else if (opt.type === 'columns') hint = '1〜6 の数字、または「自動」';
+  else hint = `${opt.min}〜${opt.max}${opt.unit === 'sec' ? ' 秒' : ''}`;
+  console.log(`  入力できる値: ${hint}(空Enter=変更しない)`);
+
+  const input = await ask('新しい値: ');
+  if (String(input).trim() === '') {
+    console.log('変更しませんでした。');
+    return;
+  }
+
+  const parsed = parseOption(opt, input);
+  if (!parsed.ok) {
+    console.log(`入力エラー: ${parsed.message}`);
+    return;
+  }
+
+  const warning = warnFor(opt, parsed.value, CONFIG);
+  if (warning) {
+    console.log(warning);
+    if (!(await askYesNo('この値で設定しますか?', false))) {
+      console.log('変更を取り消しました。');
+      return;
+    }
+  }
+
+  setOption(settings, opt, parsed.value, CONFIG);
+  saveSettings(settings);
+  applyOptions(settings, CONFIG);
+  console.log(`「${opt.label}」を ${formatOption(opt, CONFIG[opt.key])} にしました。`);
+}
+
+// 設定メニュー(すべての設定をここから変更できます)
+async function settingsMenu(settings) {
+  for (;;) {
+    console.log('\n========== 設定 ==========');
+    console.log(' [保存先]');
+    console.log(`   1. 保存先フォルダ … ${settings.outputDir || `${CONFIG.outputDir}(既定)`}`);
+
+    // 項目をグループごとに番号付きで表示(番号は2から連番)
+    let n = 1;
+    let lastGroup = null;
+    const numbered = [];
+    for (const opt of OPTION_SCHEMA) {
+      if (opt.group !== lastGroup) {
+        console.log(` [${opt.group}]`);
+        lastGroup = opt.group;
+      }
+      n++;
+      numbered.push(opt);
+      const num = String(n).padStart(2, ' ');
+      console.log(`  ${num}. ${opt.label} … ${formatOption(opt, CONFIG[opt.key])}`);
+    }
+
+    console.log('\n  r=すべて既定値に戻す   b=戻る');
+    const choice = (await ask('変更する番号を入力: ')).trim().toLowerCase();
+
+    if (choice === 'b' || choice === '' || inputClosed) return;
+
+    if (choice === 'r') {
+      if (await askYesNo('すべての設定を既定値に戻しますか?(アカウント情報は消えません)', false)) {
+        settings.options = {};
+        settings.outputDir = '';
+        saveSettings(settings);
+        // CONFIG を既定値から作り直す
+        const fresh = await import('./config.js?fresh=' + Date.now());
+        Object.assign(CONFIG, fresh.CONFIG);
+        applyOptions(settings, CONFIG);
+        console.log('すべての設定を既定値に戻しました。');
+      }
+      continue;
+    }
+
+    const index = parseInt(choice, 10);
+    if (index === 1) {
+      await editOutputDir(settings);
+    } else if (numbered[index - 2]) {
+      await editOption(settings, numbered[index - 2]);
+    } else {
+      console.log('その番号の項目はありません。');
+    }
   }
 }
 
@@ -215,22 +315,44 @@ async function withSessionRecovery(settings, fn) {
 async function startScrape(settings) {
   const statePath = await ensureSession(settings);
 
-  // かんたん設定(Enterで既定値)
-  console.log('\n--- 収集設定(Enterで既定値)---');
-  const tabChoice = await askDefault('収集する欄 1=両方 2=おすすめのみ 3=フォロー中のみ', '1');
-  const tabs = tabChoice === '2' ? ['recommend'] : tabChoice === '3' ? ['following'] : ['recommend', 'following'];
-  const maxAccounts = parseInt(await askDefault('アカウント数(タブごと)', CONFIG.maxAccounts), 10) || CONFIG.maxAccounts;
-  const fetchReplies = await askYesNo('リプライ(コメント)も取得しますか?', true);
-  const skipSeen = await askYesNo('取得済みの投稿はスキップしますか?', true);
-  const kw = (await ask('キーワード絞り込み(スペース区切り、空欄=なし): ')).trim();
-  const keywords = kw ? kw.split(/\s+/) : [];
+  // 保存されている設定をそのまま使う(毎回聞かれません)。
+  // 変えたいときだけ、その場で調整できます。
+  let tabs = Array.isArray(settings.lastTabs) && settings.lastTabs.length ? settings.lastTabs : ['recommend', 'following'];
+  const tabLabel = () =>
+    tabs.length === 2 ? 'おすすめ + フォロー中' : tabs[0] === 'recommend' ? 'おすすめのみ' : 'フォロー中のみ';
+
+  for (;;) {
+    console.log('\n--- 今回の収集設定 ---');
+    console.log(`  収集する欄     : ${tabLabel()}`);
+    console.log(`  アカウント数   : ${CONFIG.maxAccounts}(タブごと)`);
+    console.log(`  リプライ取得   : ${CONFIG.fetchReplies ? 'する' : 'しない'}`);
+    console.log(`  取得済みスキップ: ${CONFIG.skipSeen ? 'する' : 'しない'}`);
+    console.log(`  キーワード絞込 : ${CONFIG.keywords?.length ? CONFIG.keywords.join(' ') : '(なし)'}`);
+    console.log(`  保存先         : ${settings.outputDir || `${CONFIG.outputDir}(既定)`}`);
+    console.log('\n  Enter=この設定で開始   c=収集する欄を変更   s=設定を開く   b=戻る');
+    const choice = (await ask('選択: ')).trim().toLowerCase();
+
+    if (choice === '' ) break;
+    if (choice === 'b') return;
+    if (choice === 'c') {
+      const t = await askDefault('1=両方 2=おすすめのみ 3=フォロー中のみ', '1');
+      tabs = t === '2' ? ['recommend'] : t === '3' ? ['following'] : ['recommend', 'following'];
+      settings.lastTabs = tabs;
+      saveSettings(settings);
+      continue;
+    }
+    if (choice === 's') {
+      await settingsMenu(settings);
+      continue;
+    }
+    console.log('Enter、c、s、b のいずれかを入力してください。');
+  }
 
   console.log('\n収集を開始します。人間らしい速度で動くため、少し時間がかかります...');
   const { htmlPath, runDir, totalAccounts, failures } = await runScrape({
     tabs,
     authStatePath: statePath,
     outputDir: settings.outputDir || null,
-    overrides: { maxAccounts, fetchReplies, skipSeen, keywords },
     // 収集中にセッションが切れたら、自動で再ログインして続きから再開する
     onSessionExpired: () => ensureSession(settings, { force: true }),
   });
@@ -267,12 +389,14 @@ async function exportFollowingFlow(settings) {
   console.log(`\n${accounts.length} 件を保存しました:`);
   console.log(`  一覧(移植用): ${saved.txtPath}`);
   console.log(`  JSON/CSV     : ${saved.jsonPath}`);
-  console.log('この一覧はメニュー「6. アカウントを移植」で別アカウントにフォローできます。');
+  console.log('この一覧はメニュー「5. アカウントを移植」で別アカウントにフォローできます。');
 }
 
 // ---- おすすめ欄のアカウントを収集 -----------------------------------------
 async function collectRecommendFlow(settings) {
-  const max = parseInt(await askDefault('収集するアカウント数', 50), 10) || 50;
+  const max =
+    parseInt(await askDefault('収集するアカウント数', CONFIG.maxRecommendAccounts), 10) ||
+    CONFIG.maxRecommendAccounts;
   console.log('\nおすすめ欄をスクロールしてアカウントを収集します...');
   const accounts = await withSessionRecovery(settings, (statePath) =>
     collectRecommendAccounts(statePath, { max })
@@ -285,7 +409,7 @@ async function collectRecommendFlow(settings) {
   console.log(`\n${accounts.length} アカウントを保存しました:`);
   console.log(`  一覧(移植用): ${saved.txtPath}`);
   console.log(`  JSON/CSV     : ${saved.jsonPath}`);
-  console.log('この一覧はメニュー「6. アカウントを移植」で別アカウントにフォローできます。');
+  console.log('この一覧はメニュー「5. アカウントを移植」で別アカウントにフォローできます。');
 }
 
 // ---- アカウントを移植(一覧を安全にフォロー)------------------------------
@@ -307,7 +431,7 @@ async function migrateFlow(settings) {
       handles = pasted.split(/[\s,]+/).map((h) => h.replace(/^@/, '')).filter(Boolean);
     }
   } else {
-    console.log('保存済みの一覧がありません。先に「5」や「6」で一覧を作成するか、手入力してください。');
+    console.log('保存済みの一覧がありません。先に「3」や「4」で一覧を作成するか、手入力してください。');
     const pasted = (await ask('@handle を入力(スペース区切り): ')).trim();
     handles = pasted.split(/[\s,]+/).map((h) => h.replace(/^@/, '')).filter(Boolean);
   }
@@ -373,7 +497,7 @@ async function migrateFlow(settings) {
       { source: 'remaining', reason: stoppedBy || 'upperLimit' }
     );
     console.log(`\n残り ${retryHandles.length} 件を保存しました: ${saved.txtPath}`);
-    console.log('  時間をおいて「6」を実行し、この一覧を選ぶと続きからフォローできます。');
+    console.log('  時間をおいて「5」を実行し、この一覧を選ぶと続きからフォローできます。');
   }
 }
 
@@ -488,6 +612,8 @@ async function main() {
   console.log('======================================');
 
   const settings = loadSettings();
+  // 保存されている設定を反映してから始める
+  applyOptions(settings, CONFIG);
 
   for (;;) {
     const active = getActiveAccount(settings);
@@ -496,11 +622,11 @@ async function main() {
     console.log(`  保存先: ${settings.outputDir || `${CONFIG.outputDir}(既定)`}`);
     console.log('  1. 収集を開始(投稿・画像・コメント)');
     console.log('  2. ログインアカウント管理');
-    console.log('  3. 保存先フォルダの設定');
-    console.log('  4. フォロー中アカウントを出力');
-    console.log('  5. おすすめ欄のアカウントを収集');
-    console.log('  6. アカウントを移植(一覧を安全にフォロー)');
-    console.log(`  7. ${CONFIG.maxParallelViews}アカウント同時表示(マルチビュー)`);
+    console.log('  3. フォロー中アカウントを出力');
+    console.log('  4. おすすめ欄のアカウントを収集');
+    console.log('  5. アカウントを移植(一覧を安全にフォロー)');
+    console.log(`  6. ${CONFIG.maxParallelViews}アカウント同時表示(マルチビュー)`);
+    console.log('  7. 設定');
     console.log('  8. 終了');
     const choice = (await ask('番号を入力: ')).trim();
 
@@ -510,15 +636,15 @@ async function main() {
       } else if (choice === '2') {
         await manageAccounts(settings);
       } else if (choice === '3') {
-        await chooseOutputDir(settings);
-      } else if (choice === '4') {
         await exportFollowingFlow(settings);
-      } else if (choice === '5') {
+      } else if (choice === '4') {
         await collectRecommendFlow(settings);
-      } else if (choice === '6') {
+      } else if (choice === '5') {
         await migrateFlow(settings);
-      } else if (choice === '7') {
+      } else if (choice === '6') {
         await multiViewFlow(settings);
+      } else if (choice === '7') {
+        await settingsMenu(settings);
       } else if (choice === '8' || choice.toLowerCase() === 'q' || inputClosed) {
         console.log('終了します。お疲れさまでした。');
         break;

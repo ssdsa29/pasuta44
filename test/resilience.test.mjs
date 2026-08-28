@@ -216,6 +216,61 @@ check('5個は上段3・下段2に並ぶ', five.filter((p) => p.y === 0).length 
 check('5個の下段は横幅いっぱいに広がる', five[3].width === 960 && five[4].x === 960);
 check('0個を指定しても落ちない', computeGrid(0, screen).length === 0);
 
+// ---- 7. 設定(アプリ内から変更できる項目)-----------------------------------
+console.log('\n[7] アプリ内設定の保存と反映');
+const { OPTION_SCHEMA, parseOption, formatOption, applyOptions, setOption, warnFor } = await import('../src/settings.js');
+
+const byKey = (k) => OPTION_SCHEMA.find((o) => o.key === k);
+
+// 入力の解釈
+check('数値: 正しい値を受け付ける', parseOption(byKey('maxAccounts'), '25').value === 25);
+check('数値: 範囲外を拒否する', parseOption(byKey('maxAccounts'), '999').ok === false);
+check('数値: 文字を拒否する', parseOption(byKey('maxAccounts'), 'abc').ok === false);
+check('数値: 小数を拒否する', parseOption(byKey('maxAccounts'), '2.5').ok === false);
+check('はい/いいえ: y を true に', parseOption(byKey('fetchReplies'), 'y').value === true);
+check('はい/いいえ: いいえ を false に', parseOption(byKey('fetchReplies'), 'いいえ').value === false);
+check('はい/いいえ: 不正な入力を拒否', parseOption(byKey('fetchReplies'), 'ほげ').ok === false);
+check('秒→ミリ秒に変換して保存', parseOption(byKey('followDelayMinMs'), '30').value === 30000);
+check('キーワード: 空白区切りで配列に', JSON.stringify(parseOption(byKey('keywords'), '猫 犬').value) === '["猫","犬"]');
+check('キーワード: 「なし」で解除', parseOption(byKey('keywords'), 'なし').value.length === 0);
+check('列数: 「自動」を null に', parseOption(byKey('viewColumns'), '自動').value === null);
+check('列数: 範囲外を拒否', parseOption(byKey('viewColumns'), '9').ok === false);
+check('小数: 動作の速さを受け付ける', parseOption(byKey('speedFactor'), '1.5').value === 1.5);
+
+// 表示形式
+check('表示: 秒に戻して見せる', formatOption(byKey('followDelayMinMs'), 30000) === '30 秒');
+check('表示: 真偽値を日本語に', formatOption(byKey('fetchReplies'), true) === 'はい');
+check('表示: 未設定のキーワード', formatOption(byKey('keywords'), []).includes('なし'));
+
+// 危険な値の警告
+check('多すぎるフォロー数に警告', warnFor(byKey('maxFollowsPerRun'), 100, {}) !== null);
+check('短すぎる間隔に警告', warnFor(byKey('followDelayMinMs'), 3000, {}) !== null);
+check('安全な値には警告しない', warnFor(byKey('maxFollowsPerRun'), 20, {}) === null);
+
+// 保存と CONFIG への反映
+const cfg = { maxAccounts: 10, followDelayMinMs: 25000, followDelayMaxMs: 60000, outputDir: 'output' };
+const st = { options: {}, outputDir: '' };
+setOption(st, byKey('maxAccounts'), 30, cfg);
+applyOptions(st, cfg);
+check('変更した値が CONFIG に反映される', cfg.maxAccounts === 30);
+
+// 最短 > 最長 になったら自動でそろえる
+setOption(st, byKey('followDelayMinMs'), 90000, cfg);
+applyOptions(st, cfg);
+check('最短が最長を超えたら最長も合わせる', cfg.followDelayMaxMs === 90000 && cfg.followDelayMinMs === 90000);
+
+// 保存先の反映
+st.outputDir = '/tmp/mydir';
+applyOptions(st, cfg);
+check('保存先が CONFIG に反映される', cfg.outputDir === '/tmp/mydir');
+
+// 既定に戻す
+const cfg2 = { maxAccounts: 10 };
+applyOptions({ options: {}, outputDir: '' }, cfg2);
+check('設定が空なら既定値のまま', cfg2.maxAccounts === 10);
+
+check('すべての設定項目が編集可能(スキーマに定義あり)', OPTION_SCHEMA.length >= 16);
+
 // ---- 結果 ------------------------------------------------------------------
 console.log(`\n=== ${pass} 件成功 / ${fail} 件失敗 ===`);
 process.exit(fail === 0 ? 0 : 1);
