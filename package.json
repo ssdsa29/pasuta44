@@ -6,6 +6,7 @@
   "scripts": {
     "start": "node src/index.js",
     "setup": "npm install && npx playwright install chromium",
+    "test": "node test/resilience.test.mjs",
     "login": "node src/login.js",
     "scrape": "node src/scrape.js",
     "scrape:recommend": "node src/scrape.js --tabs recommend",

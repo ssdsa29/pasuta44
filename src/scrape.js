@@ -10,6 +10,15 @@ import { CONFIG } from './config.js';
 import { extractTweetsInPage, toOriginalImageUrl, imageExtension } from './extract.js';
 import { generateReport } from './report.js';
 import { humanScroll, humanPause } from './humanize.js';
+import {
+  safeGoto,
+  waitForContent,
+  checkPageState,
+  recoverPage,
+  withRetry,
+  cleanError,
+  SessionExpiredError,
+} from './resilience.js';
 
 function parseArgs() {
   const args = process.argv.slice(2);
@@ -48,19 +57,43 @@ function matchesKeywords(text) {
   return CONFIG.keywords.some((kw) => text.includes(kw));
 }
 
+// タブを切り替える。名前で見つからない場合は位置(1番目=おすすめ、2番目=フォロー中)で補正する。
 async function switchToTab(page, tabKey) {
   const candidates = CONFIG.tabs[tabKey];
   if (!candidates) throw new Error(`不明なタブ指定です: ${tabKey}(recommend / following のいずれか)`);
-  await page.waitForSelector('[role="tablist"] [role="tab"]', { timeout: 30000 });
-  for (const label of candidates) {
-    const tab = page.locator('[role="tablist"] [role="tab"]', { hasText: label }).first();
-    if ((await tab.count()) > 0) {
-      await tab.click();
-      await sleep(3000);
-      return label;
+
+  return withRetry(`タブ切り替え (${tabKey})`, async (attempt) => {
+    const ok = await waitForContent(page, '[role="tablist"] [role="tab"]', { retries: 2 });
+    if (!ok) {
+      const { state } = await checkPageState(page);
+      await recoverPage(page, state === 'ok' ? 'error' : state, attempt);
+      throw new Error('net::ERR_TABLIST_NOT_FOUND');
     }
-  }
-  throw new Error(`タブ「${candidates.join(' / ')}」が見つかりませんでした。ログイン状態を確認してください。`);
+
+    // 1) 表示名で探す(日本語UI / 英語UI)
+    for (const label of candidates) {
+      const tab = page.locator('[role="tablist"] [role="tab"]', { hasText: label }).first();
+      if ((await tab.count()) > 0) {
+        await tab.click();
+        await humanPause(2500, 4000);
+        return label;
+      }
+    }
+
+    // 2) 見つからない場合は位置で補正(X側の表記変更に対応)
+    const tabs = page.locator('[role="tablist"] [role="tab"]');
+    const count = await tabs.count();
+    const index = tabKey === 'following' ? 1 : 0;
+    if (count > index) {
+      const fallbackLabel = (await tabs.nth(index).innerText().catch(() => '')).trim();
+      console.warn(`  [補正] タブ名が変わったようです。${index + 1}番目のタブ「${fallbackLabel}」を使います。`);
+      await tabs.nth(index).click();
+      await humanPause(2500, 4000);
+      return fallbackLabel || `${index + 1}番目のタブ`;
+    }
+
+    throw new Error(`タブ「${candidates.join(' / ')}」が見つかりませんでした。ログイン状態を確認してください。`);
+  }, { retries: 3 });
 }
 
 // タイムラインをスクロールしながら、ユニークアカウント数が目標に達するまで投稿を集める
@@ -68,8 +101,19 @@ async function collectFromTimeline(page, seenIds) {
   const byAccount = new Map(); // handle -> { displayName, tweets: Map<tweetId, tweet> }
   const seenInRun = new Set();
 
+  let stagnant = 0; // 何も新しく取れなかった連続回数
+  let recovered = 0; // 補正を試みた回数
+
   for (let i = 0; i < CONFIG.maxScrolls; i++) {
-    const tweets = await page.evaluate(extractTweetsInPage);
+    // 抽出中にページが壊れることがあるため、失敗しても続行できるようにする
+    let tweets = [];
+    try {
+      tweets = await page.evaluate(extractTweetsInPage);
+    } catch (err) {
+      console.warn(`  [補正] 投稿の読み取りに失敗しました: ${cleanError(err)}`);
+    }
+
+    const before = seenInRun.size;
     for (const tweet of tweets) {
       if (seenInRun.has(tweet.tweetId)) continue;
       seenInRun.add(tweet.tweetId);
@@ -91,6 +135,30 @@ async function collectFromTimeline(page, seenIds) {
     const tweetsFull = [...byAccount.values()].every((a) => a.tweets.size >= CONFIG.maxTweetsPerAccount);
     if (accountsFull && tweetsFull) break;
 
+    // 新しい投稿が取れない状態が続いたら、ページの異常を疑って補正する
+    if (seenInRun.size === before) {
+      stagnant++;
+      if (stagnant >= 3) {
+        const { state } = await checkPageState(page);
+        if (state === 'login') throw new SessionExpiredError();
+        if (state !== 'ok') {
+          await recoverPage(page, state, ++recovered);
+          stagnant = 0;
+          continue;
+        }
+        // ページは正常だが投稿が増えない = 読み込み待ちか末尾。一度だけ長めに待って様子を見る
+        if (stagnant >= 5) {
+          if (recovered >= 2) break; // それでもダメなら打ち切り(取得済み分は保存)
+          console.warn('  [補正] 新しい投稿が読み込まれません。少し待って再読み込みします...');
+          await recoverPage(page, 'error', ++recovered);
+          stagnant = 0;
+          continue;
+        }
+      }
+    } else {
+      stagnant = 0;
+    }
+
     // 人間らしく少しずつスクロール(たまに戻る・止まって読む)
     await humanScroll(page);
   }
@@ -101,8 +169,12 @@ async function collectFromTimeline(page, seenIds) {
 // 投稿詳細ページを開いてリプライ(コメント)を収集する
 async function fetchReplies(page, tweet) {
   try {
-    await page.goto(tweet.url, { waitUntil: 'domcontentloaded' });
-    await page.waitForSelector('article[data-testid="tweet"]', { timeout: 20000 });
+    await safeGoto(page, tweet.url);
+    const ok = await waitForContent(page, 'article[data-testid="tweet"]', { retries: 2, timeout: 20000 });
+    if (!ok) {
+      console.warn(`  リプライを取得できませんでした(投稿が削除された可能性): ${tweet.url}`);
+      return [];
+    }
     await humanPause(1500, 3000);
 
     const replies = [];
@@ -128,27 +200,45 @@ async function fetchReplies(page, tweet) {
     }
     return replies;
   } catch (err) {
-    console.warn(`  リプライ取得に失敗しました (${tweet.url}): ${err.message}`);
+    // セッション切れは上位で再ログインするため、そのまま投げる
+    if (err instanceof SessionExpiredError) throw err;
+    console.warn(`  リプライ取得に失敗しました (${tweet.url}): ${cleanError(err)}`);
     return [];
   }
 }
 
-async function downloadImage(url, destPath) {
-  try {
-    const res = await fetch(url);
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const buf = Buffer.from(await res.arrayBuffer());
-    await writeFile(destPath, buf);
-    return true;
-  } catch (err) {
-    console.warn(`  画像のダウンロードに失敗しました (${url}): ${err.message}`);
-    return false;
+// 画像をダウンロードする。失敗したら少し待って再試行し、
+// それでもダメなら画質を落として(orig→large)取得を試みる。
+async function downloadImage(url, destPath, { retries = 3 } = {}) {
+  const attemptUrls = [url, url.replace(/name=orig/, 'name=large')];
+
+  for (const target of [...new Set(attemptUrls)]) {
+    for (let attempt = 1; attempt <= retries; attempt++) {
+      try {
+        const res = await fetch(target, { signal: AbortSignal.timeout(30000) });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const buf = Buffer.from(await res.arrayBuffer());
+        if (buf.length === 0) throw new Error('空のファイル');
+        await writeFile(destPath, buf);
+        return true;
+      } catch (err) {
+        const msg = String(err.message ?? err);
+        // 404など、再試行しても無駄なものは次の画質へ
+        if (/HTTP 4[0-9]{2}/.test(msg) && !/HTTP 429/.test(msg)) break;
+        if (attempt < retries) {
+          await sleep(1500 * 2 ** (attempt - 1));
+        } else {
+          console.warn(`  画像のダウンロードに失敗しました (${target}): ${msg}`);
+        }
+      }
+    }
   }
+  return false;
 }
 
-async function scrapeTab(page, tabKey, runDir, seenIds) {
+async function scrapeTab(page, tabKey, runDir, seenIds, failures) {
   console.log(`\n===== タブ「${tabKey}」の収集を開始 =====`);
-  await page.goto('https://x.com/home', { waitUntil: 'domcontentloaded' });
+  await safeGoto(page, 'https://x.com/home');
   const tabLabel = await switchToTab(page, tabKey);
   console.log(`タブ「${tabLabel}」に切り替えました。スクロールしながら収集します...`);
 
@@ -169,41 +259,53 @@ async function scrapeTab(page, tabKey, runDir, seenIds) {
     for (const tweet of account.tweets.values()) {
       console.log(`@${handle}: ${tweet.url}`);
 
-      const imageUrls = tweet.images.map(toOriginalImageUrl);
-      const savedImages = [];
-      for (let i = 0; i < imageUrls.length; i++) {
-        const ext = imageExtension(tweet.images[i]);
-        const filename = `${tweet.tweetId}_${i + 1}.${ext}`;
-        if (await downloadImage(imageUrls[i], join(imagesDir, filename))) {
-          savedImages.push(filename);
+      // 1件の失敗で全体が止まらないよう、投稿ごとに保護する
+      try {
+        const imageUrls = tweet.images.map(toOriginalImageUrl);
+        const savedImages = [];
+        let imageFailed = 0;
+        for (let i = 0; i < imageUrls.length; i++) {
+          const ext = imageExtension(tweet.images[i]);
+          const filename = `${tweet.tweetId}_${i + 1}.${ext}`;
+          if (await downloadImage(imageUrls[i], join(imagesDir, filename))) {
+            savedImages.push(filename);
+          } else {
+            imageFailed++;
+            failures.push({ type: 'image', url: imageUrls[i], tweetUrl: tweet.url });
+          }
         }
-      }
+        if (imageFailed > 0) console.warn(`    画像 ${imageFailed} 件を取得できませんでした(記録に残します)。`);
 
-      const record = {
-        tweetId: tweet.tweetId,
-        url: tweet.url,
-        datetime: tweet.datetime,
-        text: tweet.text,
-        imageUrls,
-        savedImages,
-      };
+        const record = {
+          tweetId: tweet.tweetId,
+          url: tweet.url,
+          datetime: tweet.datetime,
+          text: tweet.text,
+          imageUrls,
+          savedImages,
+        };
 
-      if (CONFIG.fetchReplies) {
-        record.replies = await fetchReplies(page, tweet);
-        for (let r = 0; r < record.replies.length; r++) {
-          const reply = record.replies[r];
-          for (let i = 0; i < reply.images.length; i++) {
-            const ext = imageExtension(reply.images[i]);
-            const filename = `${tweet.tweetId}_reply${r + 1}_${i + 1}.${ext}`;
-            if (await downloadImage(reply.images[i], join(imagesDir, filename))) {
-              savedImages.push(filename);
+        if (CONFIG.fetchReplies) {
+          record.replies = await fetchReplies(page, tweet);
+          for (let r = 0; r < record.replies.length; r++) {
+            const reply = record.replies[r];
+            for (let i = 0; i < reply.images.length; i++) {
+              const ext = imageExtension(reply.images[i]);
+              const filename = `${tweet.tweetId}_reply${r + 1}_${i + 1}.${ext}`;
+              if (await downloadImage(reply.images[i], join(imagesDir, filename))) {
+                savedImages.push(filename);
+              }
             }
           }
         }
-      }
 
-      tweets.push(record);
-      seenIds.add(tweet.tweetId);
+        tweets.push(record);
+        seenIds.add(tweet.tweetId);
+      } catch (err) {
+        if (err instanceof SessionExpiredError) throw err; // 再ログインは上位で行う
+        console.warn(`    この投稿の取得に失敗したのでスキップします: ${cleanError(err)}`);
+        failures.push({ type: 'tweet', url: tweet.url, error: cleanError(err) });
+      }
       await humanPause(1200, 3000);
     }
 
@@ -219,15 +321,17 @@ async function scrapeTab(page, tabKey, runDir, seenIds) {
 }
 
 // 収集の本体。overrides で CONFIG の値を上書きできる(対話モードから利用)。
-// 戻り値: { runDir, htmlPath, csvPath, totalAccounts }
+// onSessionExpired: セッション切れ時に呼ばれ、再ログイン後の認証ファイルのパスを返す関数
+// 戻り値: { runDir, htmlPath, csvPath, totalAccounts, failures }
 export async function runScrape({
   tabs = ['recommend', 'following'],
   overrides = {},
   authStatePath = null,
   outputDir = null,
+  onSessionExpired = null,
 } = {}) {
   Object.assign(CONFIG, overrides);
-  const statePath = authStatePath || CONFIG.authStatePath;
+  let statePath = authStatePath || CONFIG.authStatePath;
   const outDir = outputDir || CONFIG.outputDir;
 
   if (!existsSync(statePath)) {
@@ -240,37 +344,79 @@ export async function runScrape({
 
   const seenPath = join(outDir, 'seen.json');
   const seenIds = loadSeenIds(seenPath);
-  const browser = await chromium.launch({
-    headless: CONFIG.headless,
-    // 通常は自動検出。環境変数 CHROMIUM_PATH でブラウザ実行ファイルを指定可能
-    executablePath: process.env.CHROMIUM_PATH || undefined,
-  });
-  const context = await browser.newContext({
-    storageState: statePath,
-    locale: 'ja-JP',
-    viewport: { width: 1280, height: 900 },
-  });
-  const page = await context.newPage();
-
   const dataByTab = {};
-  try {
-    for (const tabKey of tabs) {
-      dataByTab[tabKey] = await scrapeTab(page, tabKey, runDir, seenIds);
+  const failures = [];
+  const remaining = [...tabs];
+  let reloginLeft = onSessionExpired ? 1 : 0; // 自動再ログインは1回まで
+
+  while (remaining.length > 0) {
+    const browser = await chromium.launch({
+      headless: CONFIG.headless,
+      // 通常は自動検出。環境変数 CHROMIUM_PATH でブラウザ実行ファイルを指定可能
+      executablePath: process.env.CHROMIUM_PATH || undefined,
+    });
+    const context = await browser.newContext({
+      storageState: statePath,
+      locale: 'ja-JP',
+      viewport: { width: 1280, height: 900 },
+    });
+    const page = await context.newPage();
+    let sessionExpired = false;
+
+    try {
+      while (remaining.length > 0) {
+        const tabKey = remaining[0];
+        try {
+          dataByTab[tabKey] = await scrapeTab(page, tabKey, runDir, seenIds, failures);
+        } catch (err) {
+          if (err instanceof SessionExpiredError) throw err;
+          // このタブは失敗しても、他のタブと既に集めた分は活かす
+          console.warn(`\nタブ「${tabKey}」の収集に失敗しました: ${cleanError(err)}`);
+          failures.push({ type: 'tab', tab: tabKey, error: cleanError(err) });
+          dataByTab[tabKey] = dataByTab[tabKey] ?? [];
+        }
+        remaining.shift();
+      }
+    } catch (err) {
+      if (err instanceof SessionExpiredError && reloginLeft > 0) {
+        sessionExpired = true;
+      } else {
+        saveSeenIds(seenIds, seenPath);
+        await context.storageState({ path: statePath }).catch(() => {});
+        await browser.close();
+        throw err;
+      }
+    } finally {
+      saveSeenIds(seenIds, seenPath);
+      if (!sessionExpired) await context.storageState({ path: statePath }).catch(() => {});
+      await browser.close();
     }
-  } finally {
-    saveSeenIds(seenIds, seenPath);
-    // 次回もログイン状態を使い回せるよう、セッションを更新して保存
-    await context.storageState({ path: statePath }).catch(() => {});
-    await browser.close();
+
+    if (sessionExpired) {
+      reloginLeft--;
+      console.warn('\n[補正] ログインセッションが切れていました。再ログインして続きから再開します...');
+      failures.push({ type: 'session', error: 'セッション切れのため再ログインしました' });
+      statePath = (await onSessionExpired()) || statePath;
+    }
   }
 
   const { htmlPath, csvPath } = generateReport(runDir, dataByTab);
   const totalAccounts = Object.values(dataByTab).reduce((n, a) => n + a.length, 0);
+
+  // 失敗があれば記録に残す(あとで確認・再取得できるように)
+  if (failures.length > 0) {
+    writeFileSync(join(runDir, 'errors.json'), JSON.stringify(failures, null, 2), 'utf8');
+  }
+
   console.log(`\nすべて完了しました。`);
   console.log(`  結果フォルダ : ${runDir}`);
   console.log(`  レポート     : ${htmlPath} (ブラウザで開けます)`);
   console.log(`  CSV          : ${csvPath}`);
-  return { runDir, htmlPath, csvPath, totalAccounts };
+  if (failures.length > 0) {
+    const counts = failures.reduce((m, f) => ((m[f.type] = (m[f.type] || 0) + 1), m), {});
+    console.log(`  取得できなかったもの: ${JSON.stringify(counts)} → ${join(runDir, 'errors.json')}`);
+  }
+  return { runDir, htmlPath, csvPath, totalAccounts, failures };
 }
 
 // 直接実行されたときだけCLIとして動く

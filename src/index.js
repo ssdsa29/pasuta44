@@ -18,6 +18,7 @@ import { runScrape } from './scrape.js';
 import { pickFolderDialog } from './pickFolder.js';
 import { exportFollowing, collectRecommendAccounts, followAccounts } from './follows.js';
 import { saveAccountList, listSavedFiles, readHandles } from './lists.js';
+import { SessionExpiredError, RateLimitedError, FollowLimitError, cleanError } from './resilience.js';
 import {
   loadSettings,
   saveSettings,
@@ -174,16 +175,30 @@ function outputRoot(settings) {
 }
 
 // 使用中アカウントのセッションを用意する(無ければログイン)。statePath を返す。
-async function ensureSession(settings) {
+async function ensureSession(settings, { force = false } = {}) {
   const account = getActiveAccount(settings);
   const statePath = authStatePathFor(account);
-  if (!existsSync(statePath)) {
+  if (force || !existsSync(statePath)) {
     console.log('\nログインが必要です。ブラウザを開きます...');
     if (account) console.log(`使用アカウント: ${account.label || account.username}`);
     else console.log('手動ログインモード(アカウント未登録)');
     await login({ account, authStatePath: statePath });
   }
   return statePath;
+}
+
+// セッション切れを検知したら自動で再ログインし、処理をやり直す。
+// fn には毎回そのときの statePath が渡される。
+async function withSessionRecovery(settings, fn) {
+  let statePath = await ensureSession(settings);
+  try {
+    return await fn(statePath);
+  } catch (err) {
+    if (!(err instanceof SessionExpiredError)) throw err;
+    console.warn('\n[補正] ログインセッションが切れていました。再ログインしてやり直します...');
+    statePath = await ensureSession(settings, { force: true });
+    return await fn(statePath);
+  }
 }
 
 // ---- 収集を開始 ------------------------------------------------------------
@@ -201,27 +216,39 @@ async function startScrape(settings) {
   const keywords = kw ? kw.split(/\s+/) : [];
 
   console.log('\n収集を開始します。人間らしい速度で動くため、少し時間がかかります...');
-  const { htmlPath, runDir, totalAccounts } = await runScrape({
+  const { htmlPath, runDir, totalAccounts, failures } = await runScrape({
     tabs,
     authStatePath: statePath,
     outputDir: settings.outputDir || null,
     overrides: { maxAccounts, fetchReplies, skipSeen, keywords },
+    // 収集中にセッションが切れたら、自動で再ログインして続きから再開する
+    onSessionExpired: () => ensureSession(settings, { force: true }),
   });
 
   if (totalAccounts === 0) {
-    console.log('\n新しく取得できた投稿はありませんでした(取得済みスキップ中の可能性)。');
-    console.log(`リセットするには ${runDir} と同じ保存先の seen.json を削除してください。`);
+    // 失敗が原因なのか、単に新着が無いだけなのかを区別して伝える
+    const tabFailed = failures?.some((f) => f.type === 'tab' || f.type === 'session');
+    if (tabFailed) {
+      console.log('\n収集に失敗したため、投稿を取得できませんでした。');
+      console.log('  ネットワーク接続とログイン状態を確認して、もう一度お試しください。');
+      console.log(`  詳細: ${runDir}/errors.json`);
+    } else {
+      console.log('\n新しく取得できた投稿はありませんでした(取得済みスキップ中の可能性)。');
+      console.log(`リセットするには ${runDir} と同じ保存先の seen.json を削除してください。`);
+    }
   } else {
-    console.log('\n完了しました。レポートをブラウザで開きます...');
+    if (failures?.length) {
+      console.log(`\n一部取得できなかったものがあります(${failures.length} 件)。詳細は errors.json をご覧ください。`);
+    }
+    console.log('完了しました。レポートをブラウザで開きます...');
     openInBrowser(htmlPath);
   }
 }
 
 // ---- フォロー中アカウントを出力 -------------------------------------------
 async function exportFollowingFlow(settings) {
-  const statePath = await ensureSession(settings);
   console.log('\n使用中アカウントの「フォロー中」一覧を取得します。少し時間がかかります...');
-  const { owner, accounts } = await exportFollowing(statePath);
+  const { owner, accounts } = await withSessionRecovery(settings, (statePath) => exportFollowing(statePath));
   if (accounts.length === 0) {
     console.log('フォロー中アカウントが取得できませんでした。');
     return;
@@ -235,10 +262,11 @@ async function exportFollowingFlow(settings) {
 
 // ---- おすすめ欄のアカウントを収集 -----------------------------------------
 async function collectRecommendFlow(settings) {
-  const statePath = await ensureSession(settings);
   const max = parseInt(await askDefault('収集するアカウント数', 50), 10) || 50;
   console.log('\nおすすめ欄をスクロールしてアカウントを収集します...');
-  const accounts = await collectRecommendAccounts(statePath, { max });
+  const accounts = await withSessionRecovery(settings, (statePath) =>
+    collectRecommendAccounts(statePath, { max })
+  );
   if (accounts.length === 0) {
     console.log('アカウントが取得できませんでした。');
     return;
@@ -294,21 +322,48 @@ async function migrateFlow(settings) {
     return;
   }
 
-  const statePath = await ensureSession(settings);
   console.log('\nフォローを開始します(人間らしい間隔で進めます)...');
-  const { follower, results, followedCount } = await followAccounts(statePath, handles, {
-    onProgress: ({ handle, status, followed }) => {
-      const mark = status === 'followed' ? '✓ フォロー' : status === 'already' ? '- 既にフォロー済' : status;
-      console.log(`  [${followed}] @${handle} … ${mark}`);
-    },
-  });
+  const labels = {
+    followed: '✓ フォロー',
+    already: '- 既にフォロー済',
+    notfound: '× 存在しない/凍結',
+    nobutton: '× フォローボタンなし(鍵アカウント等)',
+    failed: '× 失敗(あとで再実行してください)',
+  };
+  const { follower, results, followedCount, notProcessed, stoppedBy } = await withSessionRecovery(
+    settings,
+    (statePath) =>
+      followAccounts(statePath, handles, {
+        onProgress: ({ handle, status, followed }) => {
+          console.log(`  [${followed}] @${handle} … ${labels[status] ?? status}`);
+        },
+      })
+  );
 
   const counts = results.reduce((m, r) => ((m[r.status] = (m[r.status] || 0) + 1), m), {});
   console.log(`\n完了しました(実行アカウント: @${follower || '?'})`);
   console.log(`  新規フォロー: ${followedCount} 件`);
   console.log(`  内訳: ${JSON.stringify(counts)}`);
-  if (handles.length > CONFIG.maxFollowsPerRun) {
-    console.log(`  ※ 上限(${CONFIG.maxFollowsPerRun}件)に達した分は残っています。時間をおいて再実行すると続きをフォローします(既フォロー分は自動スキップ)。`);
+
+  if (stoppedBy === 'FollowLimitError') {
+    console.log('\n⚠️ Xのフォロー制限に達したため、途中で中断しました。');
+    console.log('   数時間〜1日ほど時間をおいてから、残りを再実行してください。');
+  }
+
+  // 未処理・失敗した分を保存して、次回そこから再開できるようにする
+  const retryHandles = [
+    ...notProcessed,
+    ...results.filter((r) => r.status === 'failed' || r.status === 'error').map((r) => r.handle),
+  ];
+  if (retryHandles.length > 0) {
+    const saved = saveAccountList(
+      outputRoot(settings),
+      'remaining',
+      retryHandles.map((h) => ({ handle: h, displayName: '' })),
+      { source: 'remaining', reason: stoppedBy || 'upperLimit' }
+    );
+    console.log(`\n残り ${retryHandles.length} 件を保存しました: ${saved.txtPath}`);
+    console.log('  時間をおいて「6」を実行し、この一覧を選ぶと続きからフォローできます。');
   }
 }
 
@@ -354,7 +409,18 @@ async function main() {
         console.log('1〜7 の番号を入力してください。');
       }
     } catch (err) {
-      console.error(`\nエラー: ${err.message ?? err}`);
+      // 失敗の種類に応じて、次にどうすればよいかを案内する
+      if (err instanceof SessionExpiredError) {
+        console.error('\nログインセッションが切れており、再ログインにも失敗しました。');
+        console.error('「2」でアカウント情報(パスワード)を確認するか、もう一度お試しください。');
+      } else if (err instanceof RateLimitedError) {
+        console.error('\nXのレート制限に達しました。30分〜1時間ほど時間をおいて再実行してください。');
+      } else if (err instanceof FollowLimitError) {
+        console.error('\nフォロー数の上限に達しました。時間をおいて再実行してください。');
+      } else {
+        console.error(`\nエラー: ${cleanError(err)}`);
+        console.error('もう一度試しても直らない場合は、ネットワーク接続とログイン状態をご確認ください。');
+      }
     }
   }
 

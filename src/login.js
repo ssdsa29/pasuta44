@@ -47,13 +47,21 @@ async function tryAutoLogin(page, account) {
     const loginBtn = page.locator('[data-testid="LoginForm_Login_Button"]');
     await loginBtn.click();
 
-    // 3) ログイン完了 or 2段階認証などの追加画面を判定
+    // 3) ログイン完了 or 追加画面(2段階認証・パスワード誤り等)を判定
     try {
       await waitForLoggedIn(page, 30000);
       return true;
     } catch {
-      // 2段階認証・キャプチャ等が出た可能性 → 手動対応に切り替え
-      console.log('追加の認証が必要なようです。ブラウザで操作を完了してください...');
+      const reason = await detectLoginProblem(page);
+      if (reason === 'password') {
+        console.warn('パスワードが違うようです。登録内容を確認してください(メニュー2で編集できます)。');
+        console.log('このまま手動でログインすることもできます...');
+      } else if (reason === 'ratelimit') {
+        console.warn('ログイン試行が制限されています。時間をおいてからお試しください。');
+      } else {
+        console.log('追加の認証(2段階認証など)が必要なようです。ブラウザで操作を完了してください...');
+      }
+      // どの場合も、人が操作すれば続行できるので待つ
       await waitForLoggedIn(page, LOGIN_TIMEOUT_MS);
       return true;
     }
@@ -61,6 +69,14 @@ async function tryAutoLogin(page, account) {
     console.warn(`自動ログインに失敗しました: ${err.message}`);
     return false;
   }
+}
+
+// ログインが進まない原因を推定する('password' | 'ratelimit' | 'challenge')
+async function detectLoginProblem(page) {
+  const text = await page.evaluate(() => (document.body?.innerText || '').slice(0, 3000)).catch(() => '');
+  if (/パスワードが間違って|Wrong password|正しいパスワード|incorrect password/i.test(text)) return 'password';
+  if (/回数が上限|Too many|しばらくしてから|try again later|Rate limit/i.test(text)) return 'ratelimit';
+  return 'challenge';
 }
 
 async function clickNext(page) {
