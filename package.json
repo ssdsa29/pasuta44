@@ -4,6 +4,8 @@
   "description": "X(Twitter)のおすすめ欄・フォロー欄から、APIを使わずに投稿テキスト(コメント)と画像を自動収集するツール",
   "type": "module",
   "scripts": {
+    "start": "node src/index.js",
+    "setup": "npm install && npx playwright install chromium",
     "login": "node src/login.js",
     "scrape": "node src/scrape.js",
     "scrape:recommend": "node src/scrape.js --tabs recommend",

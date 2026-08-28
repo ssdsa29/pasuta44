@@ -1,14 +1,18 @@
 // 初回セットアップ用: ブラウザを開いて手動でXにログインし、セッションを保存します。
-// 実行: npm run login
+// 実行: npm run login (npm start からも自動で呼ばれます)
 import { chromium } from 'playwright';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { CONFIG } from './config.js';
 
 const LOGIN_TIMEOUT_MS = 5 * 60 * 1000; // 5分以内にログインしてください
 
-async function main() {
-  const browser = await chromium.launch({ headless: false });
+export async function login() {
+  const browser = await chromium.launch({
+    headless: false,
+    executablePath: process.env.CHROMIUM_PATH || undefined,
+  });
   const context = await browser.newContext({
     locale: 'ja-JP',
     viewport: { width: 1280, height: 900 },
@@ -24,19 +28,22 @@ async function main() {
       timeout: LOGIN_TIMEOUT_MS,
     });
   } catch {
-    console.error('ログインがタイムアウトしました。もう一度 npm run login を実行してください。');
     await browser.close();
-    process.exit(1);
+    throw new Error('ログインがタイムアウトしました。もう一度実行してください。');
   }
 
   mkdirSync(dirname(CONFIG.authStatePath), { recursive: true });
   await context.storageState({ path: CONFIG.authStatePath });
   console.log(`ログイン状態を ${CONFIG.authStatePath} に保存しました。`);
-  console.log('次は npm run scrape で収集を開始できます。');
   await browser.close();
 }
 
-main().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
+// 直接実行されたときだけCLIとして動く
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  login()
+    .then(() => console.log('次は npm start で収集を開始できます。'))
+    .catch((err) => {
+      console.error(err.message ?? err);
+      process.exit(1);
+    });
+}

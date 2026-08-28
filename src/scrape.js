@@ -1,13 +1,14 @@
 // メインスクリプト: おすすめ欄・フォロー欄から約10アカウント分の投稿(コメント)と画像を収集します。
-// 実行: npm run scrape            (両方のタブ)
-//       npm run scrape:recommend  (おすすめのみ)
-//       npm run scrape:following  (フォロー中のみ)
+// かんたん実行: npm start(対話式)
+// 直接実行:    npm run scrape / scrape:recommend / scrape:following
 import { chromium } from 'playwright';
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { CONFIG } from './config.js';
 import { extractTweetsInPage, toOriginalImageUrl, imageExtension } from './extract.js';
+import { generateReport } from './report.js';
 
 function parseArgs() {
   const args = process.argv.slice(2);
@@ -31,6 +32,27 @@ function sanitize(name) {
   return name.replace(/[^\w.-]/g, '_');
 }
 
+// 過去の実行で取得済みの投稿IDを読み書きする(差分取得用)
+function loadSeenIds() {
+  if (!CONFIG.skipSeen) return new Set();
+  try {
+    return new Set(JSON.parse(readFileSync(CONFIG.seenStorePath, 'utf8')));
+  } catch {
+    return new Set();
+  }
+}
+
+function saveSeenIds(seenIds) {
+  if (!CONFIG.skipSeen) return;
+  mkdirSync(dirname(CONFIG.seenStorePath), { recursive: true });
+  writeFileSync(CONFIG.seenStorePath, JSON.stringify([...seenIds]), 'utf8');
+}
+
+function matchesKeywords(text) {
+  if (!CONFIG.keywords?.length) return true;
+  return CONFIG.keywords.some((kw) => text.includes(kw));
+}
+
 async function switchToTab(page, tabKey) {
   const candidates = CONFIG.tabs[tabKey];
   if (!candidates) throw new Error(`不明なタブ指定です: ${tabKey}(recommend / following のいずれか)`);
@@ -47,15 +69,17 @@ async function switchToTab(page, tabKey) {
 }
 
 // タイムラインをスクロールしながら、ユニークアカウント数が目標に達するまで投稿を集める
-async function collectFromTimeline(page) {
+async function collectFromTimeline(page, seenIds) {
   const byAccount = new Map(); // handle -> { displayName, tweets: Map<tweetId, tweet> }
-  const seenTweetIds = new Set();
+  const seenInRun = new Set();
 
   for (let i = 0; i < CONFIG.maxScrolls; i++) {
     const tweets = await page.evaluate(extractTweetsInPage);
     for (const tweet of tweets) {
-      if (seenTweetIds.has(tweet.tweetId)) continue;
-      seenTweetIds.add(tweet.tweetId);
+      if (seenInRun.has(tweet.tweetId)) continue;
+      seenInRun.add(tweet.tweetId);
+      if (seenIds.has(tweet.tweetId)) continue; // 過去に取得済み
+      if (!matchesKeywords(tweet.text)) continue;
 
       let account = byAccount.get(tweet.handle);
       if (!account) {
@@ -128,20 +152,22 @@ async function downloadImage(url, destPath) {
   }
 }
 
-async function scrapeTab(page, tabKey, runDir) {
+async function scrapeTab(page, tabKey, runDir, seenIds) {
   console.log(`\n===== タブ「${tabKey}」の収集を開始 =====`);
   await page.goto('https://x.com/home', { waitUntil: 'domcontentloaded' });
   const tabLabel = await switchToTab(page, tabKey);
   console.log(`タブ「${tabLabel}」に切り替えました。スクロールしながら収集します...`);
 
-  const byAccount = await collectFromTimeline(page);
+  const byAccount = await collectFromTimeline(page, seenIds);
   console.log(`${byAccount.size} アカウント分の投稿を検出しました。`);
 
   const tabDir = join(runDir, tabKey);
   const summary = [];
+  const tabData = [];
 
   for (const [handle, account] of byAccount) {
-    const accountDir = join(tabDir, sanitize(handle));
+    const dirName = sanitize(handle);
+    const accountDir = join(tabDir, dirName);
     const imagesDir = join(accountDir, 'images');
     mkdirSync(imagesDir, { recursive: true });
 
@@ -183,31 +209,40 @@ async function scrapeTab(page, tabKey, runDir) {
       }
 
       tweets.push(record);
+      seenIds.add(tweet.tweetId);
       await jitteredDelay();
     }
 
-    const accountData = { handle, displayName: account.displayName, tab: tabKey, tweets };
+    const accountData = { handle, displayName: account.displayName, dirName, tab: tabKey, tweets };
     writeFileSync(join(accountDir, 'tweets.json'), JSON.stringify(accountData, null, 2), 'utf8');
     summary.push({ handle, displayName: account.displayName, tweetCount: tweets.length });
+    tabData.push(accountData);
   }
 
   writeFileSync(join(tabDir, 'summary.json'), JSON.stringify(summary, null, 2), 'utf8');
   console.log(`タブ「${tabKey}」完了: ${summary.length} アカウントを ${tabDir} に保存しました。`);
+  return tabData;
 }
 
-async function main() {
-  const { tabs } = parseArgs();
+// 収集の本体。overrides で CONFIG の値を上書きできる(対話モードから利用)。
+// 戻り値: { runDir, htmlPath, csvPath, totalAccounts }
+export async function runScrape({ tabs = ['recommend', 'following'], overrides = {} } = {}) {
+  Object.assign(CONFIG, overrides);
 
   if (!existsSync(CONFIG.authStatePath)) {
-    console.error(`認証情報 (${CONFIG.authStatePath}) が見つかりません。先に npm run login を実行してください。`);
-    process.exit(1);
+    throw new Error(`認証情報 (${CONFIG.authStatePath}) が見つかりません。先に npm run login を実行してください。`);
   }
 
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
   const runDir = join(CONFIG.outputDir, timestamp);
   mkdirSync(runDir, { recursive: true });
 
-  const browser = await chromium.launch({ headless: CONFIG.headless });
+  const seenIds = loadSeenIds();
+  const browser = await chromium.launch({
+    headless: CONFIG.headless,
+    // 通常は自動検出。環境変数 CHROMIUM_PATH でブラウザ実行ファイルを指定可能
+    executablePath: process.env.CHROMIUM_PATH || undefined,
+  });
   const context = await browser.newContext({
     storageState: CONFIG.authStatePath,
     locale: 'ja-JP',
@@ -215,19 +250,31 @@ async function main() {
   });
   const page = await context.newPage();
 
+  const dataByTab = {};
   try {
     for (const tabKey of tabs) {
-      await scrapeTab(page, tabKey, runDir);
+      dataByTab[tabKey] = await scrapeTab(page, tabKey, runDir, seenIds);
     }
-    console.log(`\nすべて完了しました。結果: ${runDir}`);
   } finally {
+    saveSeenIds(seenIds);
     // 次回もログイン状態を使い回せるよう、セッションを更新して保存
     await context.storageState({ path: CONFIG.authStatePath }).catch(() => {});
     await browser.close();
   }
+
+  const { htmlPath, csvPath } = generateReport(runDir, dataByTab);
+  const totalAccounts = Object.values(dataByTab).reduce((n, a) => n + a.length, 0);
+  console.log(`\nすべて完了しました。`);
+  console.log(`  結果フォルダ : ${runDir}`);
+  console.log(`  レポート     : ${htmlPath} (ブラウザで開けます)`);
+  console.log(`  CSV          : ${csvPath}`);
+  return { runDir, htmlPath, csvPath, totalAccounts };
 }
 
-main().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
+// 直接実行されたときだけCLIとして動く
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  runScrape(parseArgs()).catch((err) => {
+    console.error(err.message ?? err);
+    process.exit(1);
+  });
+}

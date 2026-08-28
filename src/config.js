@@ -18,8 +18,17 @@ export const CONFIG = {
   // スクロール間の待機時間(ミリ秒)。ランダムに±50%揺らぎます
   scrollDelayMs: 2000,
 
+  // 過去の実行で取得済みの投稿をスキップするか(差分取得)
+  skipSeen: true,
+
+  // キーワード絞り込み(空配列ならすべて取得。いずれかを含む投稿のみ収集)
+  keywords: [],
+
   // 認証状態の保存先
   authStatePath: 'auth/state.json',
+
+  // 取得済み投稿IDの記録先
+  seenStorePath: 'output/seen.json',
 
   // 出力先ディレクトリ
   outputDir: 'output',
