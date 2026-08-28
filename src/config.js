@@ -15,6 +15,12 @@ export const CONFIG = {
   // タイムラインをスクロールする最大回数(無限ループ防止)
   maxScrolls: 30,
 
+  // --- マルチビュー(複数アカウント同時表示)の設定 ---
+  // 同時に開くウィンドウの最大数
+  maxParallelViews: 5,
+  // タイル配置の列数(null なら枚数に応じて自動)
+  viewColumns: null,
+
   // --- 安全なフォロー移植の設定 ---
   // 1回の実行でフォローする最大件数(多すぎるとBANリスク。控えめ推奨)
   maxFollowsPerRun: 20,

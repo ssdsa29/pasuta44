@@ -189,6 +189,33 @@ check('空ファイルは失敗として記録する', (await downloadImage(`htt
 server.close();
 rmSync(dir, { recursive: true, force: true });
 
+// ---- 6. マルチビューのタイル配置 -------------------------------------------
+console.log('\n[6] 複数アカウント同時表示のウィンドウ配置');
+const { computeGrid } = await import('../src/multiview.js');
+const screen = { width: 1920, height: 1080 };
+
+const overlaps = (g) => {
+  for (let i = 0; i < g.length; i++) {
+    for (let j = i + 1; j < g.length; j++) {
+      const a = g[i], b = g[j];
+      if (a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height) return true;
+    }
+  }
+  return false;
+};
+const inScreen = (g) =>
+  g.every((p) => p.x >= 0 && p.y >= 0 && p.x + p.width <= screen.width && p.y + p.height <= screen.height);
+
+for (const n of [1, 2, 3, 4, 5, 6]) {
+  const g = computeGrid(n, screen);
+  check(`${n}個: 枚数どおり・重なりなし・画面内に収まる`, g.length === n && !overlaps(g) && inScreen(g));
+}
+
+const five = computeGrid(5, screen);
+check('5個は上段3・下段2に並ぶ', five.filter((p) => p.y === 0).length === 3 && five.filter((p) => p.y > 0).length === 2);
+check('5個の下段は横幅いっぱいに広がる', five[3].width === 960 && five[4].x === 960);
+check('0個を指定しても落ちない', computeGrid(0, screen).length === 0);
+
 // ---- 結果 ------------------------------------------------------------------
 console.log(`\n=== ${pass} 件成功 / ${fail} 件失敗 ===`);
 process.exit(fail === 0 ? 0 : 1);

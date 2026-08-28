@@ -6,7 +6,8 @@
 //   4. フォロー中アカウントを出力
 //   5. おすすめ欄のアカウントを収集
 //   6. アカウントを移植(一覧を安全にフォロー)
-//   7. 終了(シャットダウン)
+//   7. 複数アカウント同時表示(マルチビュー)
+//   8. 終了(シャットダウン)
 import { existsSync } from 'node:fs';
 import { createInterface } from 'node:readline';
 import { stdin, stdout } from 'node:process';
@@ -19,6 +20,15 @@ import { pickFolderDialog } from './pickFolder.js';
 import { exportFollowing, collectRecommendAccounts, followAccounts } from './follows.js';
 import { saveAccountList, listSavedFiles, readHandles } from './lists.js';
 import { SessionExpiredError, RateLimitedError, FollowLimitError, cleanError } from './resilience.js';
+import {
+  openMultiView,
+  gotoAll,
+  reloadAll,
+  statusAll,
+  closeAll,
+  checkLoginAll,
+  detectScreenSize,
+} from './multiview.js';
 import {
   loadSettings,
   saveSettings,
@@ -367,6 +377,110 @@ async function migrateFlow(settings) {
   }
 }
 
+// ---- 複数アカウントを同時表示 ---------------------------------------------
+async function multiViewFlow(settings) {
+  console.log('\n--- 複数アカウントを同時に表示 ---');
+
+  // 表示するアカウントを決める(登録済みアカウント、無ければ手動ログイン分)
+  let entries;
+  if (settings.accounts.length === 0) {
+    console.log('アカウントが未登録のため、手動ログインのセッションを1つ表示します。');
+    console.log('複数アカウントを並べたい場合は、メニュー「2」で登録してください。');
+    entries = [{ account: null, statePath: authStatePathFor(null) }];
+  } else {
+    settings.accounts.forEach((acc, i) => console.log('  ' + accountDisplayName(acc, i)));
+    const limit = CONFIG.maxParallelViews;
+    const input = await askDefault(
+      `表示するアカウントの番号(スペース区切り、最大${limit}件。空Enter=先頭から${limit}件)`,
+      'すべて'
+    );
+    let picked;
+    if (input === 'すべて') {
+      picked = settings.accounts.slice(0, limit);
+    } else {
+      picked = input
+        .split(/[\s,]+/)
+        .map((n) => settings.accounts[parseInt(n, 10) - 1])
+        .filter(Boolean)
+        .slice(0, limit);
+    }
+    if (picked.length === 0) {
+      console.log('表示するアカウントがありません。');
+      return;
+    }
+    entries = picked.map((account) => ({ account, statePath: authStatePathFor(account) }));
+  }
+
+  // セッションが無いアカウントは先にログインしておく
+  for (const e of entries) {
+    if (!existsSync(e.statePath)) {
+      const name = e.account?.label || e.account?.username || '手動ログイン';
+      console.log(`\n「${name}」はログインが必要です。ブラウザを開きます...`);
+      await login({ account: e.account, authStatePath: e.statePath });
+    }
+  }
+
+  const screen = await detectScreenSize();
+  console.log(`\n画面サイズ ${screen.width}x${screen.height} に ${entries.length} 個のウィンドウを並べます...`);
+  const views = await openMultiView(entries, { columns: CONFIG.viewColumns, screen });
+
+  if (views.length === 0) {
+    console.log('ウィンドウを開けませんでした。');
+    return;
+  }
+
+  // 全ウィンドウをホームに移動して表示を揃える
+  const opened = await gotoAll(views, 'https://x.com/home');
+  console.log(`\n${views.length} 個のウィンドウを表示しました。各ウィンドウは自由に操作できます。`);
+  if (opened.failed > 0) {
+    console.warn(`  ※ ${opened.failed} 個のウィンドウでページを読み込めませんでした(ネットワークをご確認ください)。`);
+  }
+
+  // ログインが切れているアカウントがあれば知らせる
+  const loginStates = await checkLoginAll(views);
+  const needLogin = loginStates.filter((s) => s.state === 'login');
+  if (needLogin.length > 0) {
+    console.warn(`  ※ ログインが切れているアカウント: ${needLogin.map((s) => s.name).join('、')}`);
+    console.warn('    そのウィンドウで直接ログインするか、閉じてからメニュー「2」で設定してください。');
+  }
+
+  // 表示中の操作メニュー
+  for (;;) {
+    console.log('\n--- 表示中の操作 ---');
+    console.log('  1. 全ウィンドウをホームに移動');
+    console.log('  2. 全ウィンドウを指定のユーザー/URLへ移動');
+    console.log('  3. 全ウィンドウを再読み込み');
+    console.log('  4. 各ウィンドウの状態を表示');
+    console.log('  5. 閉じてメニューに戻る');
+    const choice = (await ask('番号を入力: ')).trim();
+
+    if (choice === '1') {
+      const { failed } = await gotoAll(views, 'https://x.com/home');
+      console.log(failed ? `移動しました(${failed} 件失敗)` : '全ウィンドウをホームに移動しました。');
+    } else if (choice === '2') {
+      const input = (await ask('@ユーザー名 または URL: ')).trim();
+      if (!input) continue;
+      const url = /^https?:\/\//i.test(input)
+        ? input
+        : `https://x.com/${input.replace(/^@/, '')}`;
+      const { failed } = await gotoAll(views, url);
+      console.log(failed ? `${url} へ移動しました(${failed} 件失敗)` : `全ウィンドウを ${url} へ移動しました。`);
+    } else if (choice === '3') {
+      const { failed } = await reloadAll(views);
+      console.log(failed ? `再読み込みしました(${failed} 件失敗)` : '全ウィンドウを再読み込みしました。');
+    } else if (choice === '4') {
+      const list = await statusAll(views);
+      list.forEach((s, i) => console.log(`  ${i + 1}. ${s.name} … ${s.alive ? s.url : '(閉じています)'}`));
+    } else if (choice === '5' || choice === '' || inputClosed) {
+      break;
+    }
+  }
+
+  console.log('\nウィンドウを閉じています(ログイン状態は保存されます)...');
+  await closeAll(views);
+  console.log('閉じました。');
+}
+
 // ---- メインメニュー --------------------------------------------------------
 async function main() {
   console.log('======================================');
@@ -386,7 +500,8 @@ async function main() {
     console.log('  4. フォロー中アカウントを出力');
     console.log('  5. おすすめ欄のアカウントを収集');
     console.log('  6. アカウントを移植(一覧を安全にフォロー)');
-    console.log('  7. 終了');
+    console.log(`  7. ${CONFIG.maxParallelViews}アカウント同時表示(マルチビュー)`);
+    console.log('  8. 終了');
     const choice = (await ask('番号を入力: ')).trim();
 
     try {
@@ -402,11 +517,13 @@ async function main() {
         await collectRecommendFlow(settings);
       } else if (choice === '6') {
         await migrateFlow(settings);
-      } else if (choice === '7' || choice.toLowerCase() === 'q' || inputClosed) {
+      } else if (choice === '7') {
+        await multiViewFlow(settings);
+      } else if (choice === '8' || choice.toLowerCase() === 'q' || inputClosed) {
         console.log('終了します。お疲れさまでした。');
         break;
       } else {
-        console.log('1〜7 の番号を入力してください。');
+        console.log('1〜8 の番号を入力してください。');
       }
     } catch (err) {
       // 失敗の種類に応じて、次にどうすればよいかを案内する
