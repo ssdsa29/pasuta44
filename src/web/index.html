@@ -1,0 +1,477 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>X 収集ツール</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%231d9bf0'/%3E%3Ctext x='16' y='23' font-size='20' font-family='sans-serif' font-weight='bold' fill='white' text-anchor='middle'%3EX%3C/text%3E%3C/svg%3E">
+<style>
+  :root{
+    --bg:#f6f8fa; --panel:#fff; --text:#16202a; --muted:#5b6b7c; --line:#dfe6ee;
+    --brand:#1d9bf0; --brand-dark:#1785cc; --ok:#0f9d58; --warn:#c47f00; --err:#d93025;
+    --shadow:0 1px 3px rgba(16,32,48,.08),0 8px 24px rgba(16,32,48,.06);
+  }
+  @media (prefers-color-scheme: dark){
+    :root{ --bg:#0f1720; --panel:#17212b; --text:#e6edf3; --muted:#8ba0b3; --line:#25323f;
+           --shadow:0 1px 3px rgba(0,0,0,.4),0 8px 24px rgba(0,0,0,.3); }
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);
+       font-family:"Segoe UI","Yu Gothic UI",system-ui,-apple-system,sans-serif;line-height:1.6}
+  header{background:var(--panel);border-bottom:1px solid var(--line);padding:10px 18px;
+         display:flex;align-items:center;gap:14px;position:sticky;top:0;z-index:10}
+  header h1{font-size:16px;margin:0;font-weight:700}
+  .badge{font-size:12px;color:var(--muted);border:1px solid var(--line);border-radius:99px;padding:2px 10px}
+  .spacer{flex:1}
+  nav{display:flex;gap:4px;padding:10px 18px 0;flex-wrap:wrap}
+  nav button{background:transparent;border:1px solid transparent;border-bottom:none;
+    padding:8px 16px;border-radius:8px 8px 0 0;cursor:pointer;color:var(--muted);font-size:14px;font-weight:600}
+  nav button.active{background:var(--panel);border-color:var(--line);color:var(--text)}
+  main{padding:0 18px 24px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;
+        padding:18px;margin-bottom:16px;box-shadow:var(--shadow)}
+  .card h2{margin:0 0 4px;font-size:15px}
+  .card p.hint{margin:0 0 14px;color:var(--muted);font-size:13px}
+  button.btn{background:var(--brand);color:#fff;border:0;border-radius:8px;padding:9px 18px;
+    font-size:14px;font-weight:600;cursor:pointer}
+  button.btn:hover{background:var(--brand-dark)}
+  button.btn:disabled{opacity:.45;cursor:not-allowed}
+  button.ghost{background:transparent;color:var(--text);border:1px solid var(--line)}
+  button.ghost:hover{background:var(--bg)}
+  button.danger{background:var(--err)}
+  button.small{padding:5px 12px;font-size:13px}
+  input,select{background:var(--bg);color:var(--text);border:1px solid var(--line);
+    border-radius:8px;padding:7px 10px;font-size:14px;font-family:inherit}
+  input[type=text],input[type=password],input[type=number]{width:100%}
+  label.check{display:flex;align-items:center;gap:8px;cursor:pointer;font-size:14px}
+  .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+  table{width:100%;border-collapse:collapse;font-size:14px}
+  th,td{text-align:left;padding:9px 8px;border-bottom:1px solid var(--line);vertical-align:middle}
+  th{color:var(--muted);font-weight:600;font-size:12px}
+  .group-title{font-size:12px;color:var(--muted);font-weight:700;
+    padding:14px 8px 4px;border-bottom:1px solid var(--line)}
+  .opt-value{width:150px}
+  .muted{color:var(--muted)}
+  .tag{font-size:11px;padding:2px 8px;border-radius:99px;background:var(--bg);border:1px solid var(--line);color:var(--muted)}
+  .tag.on{background:rgba(15,157,88,.12);border-color:rgba(15,157,88,.4);color:var(--ok)}
+  .tag.active{background:rgba(29,155,240,.14);border-color:rgba(29,155,240,.4);color:var(--brand)}
+  #log{background:#0b1219;color:#cfe3f5;border-radius:10px;padding:12px;height:280px;
+    overflow:auto;font-family:Consolas,"SF Mono",monospace;font-size:12.5px;line-height:1.55;white-space:pre-wrap}
+  #log .warn{color:#ffd479}
+  #log .error{color:#ff8b7d}
+  .status-dot{width:9px;height:9px;border-radius:50%;background:var(--muted);display:inline-block}
+  .status-dot.running{background:var(--brand);animation:pulse 1.2s infinite}
+  @keyframes pulse{50%{opacity:.3}}
+  .toast{position:fixed;right:18px;bottom:18px;background:var(--panel);border:1px solid var(--line);
+    border-left:4px solid var(--brand);border-radius:8px;padding:12px 16px;box-shadow:var(--shadow);
+    max-width:380px;font-size:14px;z-index:50}
+  .toast.err{border-left-color:var(--err)}
+  .toast.ok{border-left-color:var(--ok)}
+  .warnbox{background:rgba(196,127,0,.1);border:1px solid rgba(196,127,0,.35);color:var(--warn);
+    border-radius:8px;padding:10px 14px;font-size:13px;margin:10px 0}
+  ul.links{margin:0;padding-left:18px;font-size:14px}
+  ul.links a{color:var(--brand)}
+  .hidden{display:none!important}
+</style>
+</head>
+<body>
+<header>
+  <h1>X 収集ツール</h1>
+  <span class="badge" id="accountBadge">読み込み中…</span>
+  <span class="spacer"></span>
+  <span class="badge"><span class="status-dot" id="dot"></span> <span id="statusText">待機中</span></span>
+  <button class="btn ghost small" id="btnShutdown">終了</button>
+</header>
+
+<nav id="tabs">
+  <button data-tab="home" class="active">ホーム</button>
+  <button data-tab="follow">フォロー</button>
+  <button data-tab="views">同時表示</button>
+  <button data-tab="accounts">アカウント</button>
+  <button data-tab="settings">設定</button>
+</nav>
+
+<main>
+  <!-- ホーム -->
+  <section data-panel="home">
+    <div class="card">
+      <h2>投稿・画像・コメントを収集</h2>
+      <p class="hint">おすすめ欄／フォロー欄から、アカウント名・本文・投稿時間・画像・リプライを集めます。</p>
+      <div class="row" style="margin-bottom:12px">
+        <label class="check"><input type="checkbox" id="tabRecommend" checked> おすすめ欄</label>
+        <label class="check"><input type="checkbox" id="tabFollowing" checked> フォロー欄</label>
+        <span class="muted" id="scrapeSummary"></span>
+      </div>
+      <button class="btn" id="btnScrape">収集を開始</button>
+    </div>
+    <div class="card">
+      <h2>実行状況</h2>
+      <p class="hint">進み具合がここに表示されます。長い処理は「中止」で安全に止められます。</p>
+      <div id="log"></div>
+      <div class="row" style="margin-top:10px">
+        <button class="btn danger small" id="btnCancel" disabled>中止</button>
+        <span class="muted" id="jobInfo"></span>
+      </div>
+    </div>
+    <div class="card">
+      <h2>これまでの結果</h2>
+      <ul class="links" id="runs"><li class="muted">まだありません</li></ul>
+    </div>
+  </section>
+
+  <!-- フォロー -->
+  <section data-panel="follow" class="hidden">
+    <div class="card">
+      <h2>アカウント一覧をつくる</h2>
+      <p class="hint">使用中のアカウントで実行します。作った一覧は下の「移植」で使えます。</p>
+      <div class="row">
+        <button class="btn" id="btnExportFollowing">フォロー中を出力</button>
+        <button class="btn ghost" id="btnCollectRecommend">おすすめ欄から集める</button>
+        <input type="number" id="recommendMax" class="opt-value" min="1" max="500" title="集めるアカウント数">
+      </div>
+    </div>
+    <div class="card">
+      <h2>アカウントを移植（安全に一括フォロー）</h2>
+      <p class="hint">
+        いま使用中のアカウントでフォローします。別アカウントへ移す場合は、先に「アカウント」タブで切り替えてください。
+      </p>
+      <div class="warnbox" id="migrateLimits"></div>
+      <div class="row" style="margin-bottom:10px">
+        <select id="listSelect" style="min-width:320px"></select>
+        <button class="btn ghost small" id="btnRefreshLists">更新</button>
+      </div>
+      <p class="hint" style="margin:6px 0">または直接入力（@handle をスペース区切り）:</p>
+      <input type="text" id="handlesInput" placeholder="@example1 @example2">
+      <div class="row" style="margin-top:12px">
+        <button class="btn" id="btnMigrate">フォローを実行</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- 同時表示 -->
+  <section data-panel="views" class="hidden">
+    <div class="card">
+      <h2>複数アカウントを同時に表示</h2>
+      <p class="hint">アカウントごとに別ウィンドウで開き、画面をタイル状に並べます。各ウィンドウは普通に操作できます。</p>
+      <div id="viewPicker" style="margin-bottom:12px"></div>
+      <div class="row">
+        <button class="btn" id="btnOpenViews">ウィンドウを開く</button>
+        <button class="btn ghost" id="btnCloseViews">すべて閉じる</button>
+      </div>
+    </div>
+    <div class="card" id="viewControls">
+      <h2>表示中の一括操作</h2>
+      <div class="row" style="margin-bottom:10px">
+        <input type="text" id="gotoTarget" placeholder="@ユーザー名 または URL（空欄=ホーム）" style="flex:1;min-width:240px">
+        <button class="btn small" id="btnGotoAll">全員を移動</button>
+        <button class="btn ghost small" id="btnReloadAll">全員を再読み込み</button>
+      </div>
+      <table><tbody id="viewList"></tbody></table>
+    </div>
+  </section>
+
+  <!-- アカウント -->
+  <section data-panel="accounts" class="hidden">
+    <div class="card">
+      <h2>ログインアカウント</h2>
+      <p class="hint">
+        パスワードを入れると自動ログインします（空ならブラウザで手動ログイン）。
+        情報はこのPC内にのみ保存され、外部には送信されません。
+      </p>
+      <table>
+        <thead><tr><th>使用</th><th>名前</th><th>ユーザー名</th><th>状態</th><th></th></tr></thead>
+        <tbody id="accountRows"></tbody>
+      </table>
+    </div>
+    <div class="card">
+      <h2>アカウントを追加</h2>
+      <div class="row" style="margin-bottom:10px">
+        <input type="text" id="newLabel" placeholder="表示名（任意）" style="flex:1;min-width:150px">
+        <input type="text" id="newUsername" placeholder="ユーザー名 / メール / 電話" style="flex:1;min-width:180px">
+        <input type="password" id="newPassword" placeholder="パスワード（任意）" style="flex:1;min-width:150px">
+      </div>
+      <button class="btn" id="btnAddAccount">追加</button>
+    </div>
+  </section>
+
+  <!-- 設定 -->
+  <section data-panel="settings" class="hidden">
+    <div class="card">
+      <h2>保存先フォルダ</h2>
+      <div class="row">
+        <input type="text" id="outputDir" placeholder="output（既定）" style="flex:1;min-width:240px">
+        <button class="btn ghost small" id="btnPickFolder">フォルダを選ぶ</button>
+        <button class="btn small" id="btnSaveOutputDir">保存</button>
+      </div>
+    </div>
+    <div class="card">
+      <h2>設定</h2>
+      <p class="hint">値を変えると自動で保存され、次回起動時にも引き継がれます。</p>
+      <table><tbody id="optionRows"></tbody></table>
+      <div class="row" style="margin-top:14px">
+        <button class="btn ghost small" id="btnResetSettings">すべて既定値に戻す</button>
+      </div>
+    </div>
+  </section>
+</main>
+
+<script>
+const $ = (s) => document.querySelector(s);
+let STATE = null;
+
+function toast(msg, kind = '') {
+  const el = document.createElement('div');
+  el.className = 'toast ' + kind;
+  el.textContent = msg;
+  document.body.appendChild(el);
+  setTimeout(() => el.remove(), 4500);
+}
+
+async function api(path, body) {
+  const res = await fetch(path, {
+    method: body === undefined ? 'GET' : 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || `エラー (${res.status})`);
+  return data;
+}
+
+// ---- タブ切り替え ----
+$('#tabs').addEventListener('click', (e) => {
+  const btn = e.target.closest('button[data-tab]');
+  if (!btn) return;
+  document.querySelectorAll('#tabs button').forEach((b) => b.classList.toggle('active', b === btn));
+  document.querySelectorAll('section[data-panel]').forEach((s) =>
+    s.classList.toggle('hidden', s.dataset.panel !== btn.dataset.tab));
+});
+
+// ---- ログ表示 ----
+function appendLog(text, level) {
+  const log = $('#log');
+  const line = document.createElement('div');
+  if (level && level !== 'info') line.className = level;
+  line.textContent = text;
+  log.appendChild(line);
+  while (log.childElementCount > 500) log.firstChild.remove();
+  log.scrollTop = log.scrollHeight;
+}
+
+function setRunning(running, name) {
+  $('#dot').classList.toggle('running', running);
+  $('#statusText').textContent = running ? `${name} を実行中` : '待機中';
+  $('#btnCancel').disabled = !running;
+  document.querySelectorAll('.btn:not(.ghost):not(.danger)').forEach((b) => {
+    if (b.id !== 'btnShutdown') b.disabled = running;
+  });
+}
+
+const events = new EventSource('/api/events');
+events.onmessage = (e) => {
+  const ev = JSON.parse(e.data);
+  if (ev.type === 'log') appendLog(ev.text, ev.level);
+  if (ev.type === 'start') { $('#log').textContent = ''; setRunning(true, ev.name); }
+  if (ev.type === 'done') {
+    setRunning(false);
+    toast(ev.cancelled ? `${ev.name}を中止しました` : `${ev.name}が完了しました`, ev.cancelled ? '' : 'ok');
+    if (ev.result?.reportUrl) {
+      appendLog('レポートを開きます...', 'info');
+      window.open(ev.result.reportUrl, '_blank');
+    }
+    refresh();
+  }
+  if (ev.type === 'failed') { setRunning(false); toast(`${ev.name}に失敗: ${ev.error}`, 'err'); refresh(); }
+};
+
+// ---- 画面の再描画 ----
+async function refresh() {
+  STATE = await api('/api/state');
+  const s = STATE.settings;
+
+  // ヘッダー
+  const active = STATE.accounts.find((a) => a.active);
+  $('#accountBadge').textContent = '使用中: ' + (active ? (active.label || active.username) : '手動ログイン');
+  setRunning(STATE.job.running, STATE.job.name);
+  $('#jobInfo').textContent = STATE.job.running ? '' : (STATE.job.error ? '前回: 失敗' : '');
+
+  // ホーム
+  const get = (k) => s.options.find((o) => o.key === k);
+  $('#scrapeSummary').textContent =
+    `各タブ ${get('maxAccounts').value} アカウント / 1アカウント ${get('maxTweetsPerAccount').value} 投稿 / ` +
+    `リプライ${get('fetchReplies').value ? 'あり' : 'なし'} / 保存先 ${s.outputDirLabel}`;
+  if (STATE.lastTabs) {
+    $('#tabRecommend').checked = STATE.lastTabs.includes('recommend');
+    $('#tabFollowing').checked = STATE.lastTabs.includes('following');
+  }
+  $('#runs').innerHTML = STATE.runs.length
+    ? STATE.runs.map((r) => `<li><a href="${r.url}" target="_blank">${r.name} のレポート</a></li>`).join('')
+    : '<li class="muted">まだありません</li>';
+
+  // フォロー
+  $('#recommendMax').value = get('maxRecommendAccounts').value;
+  $('#migrateLimits').textContent =
+    `安全のため 1回 ${get('maxFollowsPerRun').value} 件まで / 1件ごとに ` +
+    `${get('followDelayMinMs').raw}〜${get('followDelayMaxMs').raw} 秒あけます（設定タブで変更できます）`;
+  $('#listSelect').innerHTML = STATE.lists.length
+    ? STATE.lists.map((l) => `<option value="${l.path}">${l.file}（${l.count}件）</option>`).join('')
+    : '<option value="">（保存済みの一覧はありません）</option>';
+
+  // 同時表示
+  $('#viewPicker').innerHTML = STATE.accounts.length
+    ? STATE.accounts.map((a) => `<label class="check"><input type="checkbox" class="viewPick" value="${a.index}" ${a.index < s.options.find((o) => o.key === 'maxParallelViews').value ? 'checked' : ''}> ${a.label || a.username}</label>`).join('')
+    : '<span class="muted">アカウント未登録のため、手動ログインのセッションを1つ表示します。</span>';
+  const open = STATE.multiview.open;
+  $('#viewControls').classList.toggle('hidden', !open);
+  $('#viewList').innerHTML = STATE.multiview.views
+    .map((v) => `<tr><td>${v.name}</td><td class="muted">${v.alive ? v.url : '（閉じています）'}</td></tr>`).join('');
+
+  // アカウント
+  $('#accountRows').innerHTML = STATE.accounts.length
+    ? STATE.accounts.map((a) => `
+      <tr>
+        <td><input type="radio" name="activeAcc" ${a.active ? 'checked' : ''} data-select="${a.index}"></td>
+        <td>${a.label || '<span class="muted">（未設定）</span>'}</td>
+        <td>${a.username}</td>
+        <td>
+          ${a.loggedIn ? '<span class="tag on">ログイン済</span>' : '<span class="tag">未ログイン</span>'}
+          ${a.hasPassword ? '<span class="tag">自動ログイン</span>' : '<span class="tag">手動</span>'}
+        </td>
+        <td class="row">
+          <button class="btn ghost small" data-login="${a.index}">ログイン</button>
+          <button class="btn ghost small" data-del="${a.index}">削除</button>
+        </td>
+      </tr>`).join('')
+    : '<tr><td colspan="5" class="muted">まだ登録されていません。下から追加してください。</td></tr>';
+
+  // 設定
+  $('#outputDir').value = s.outputDir;
+  let lastGroup = null;
+  $('#optionRows').innerHTML = s.options.map((o) => {
+    let head = '';
+    if (o.group !== lastGroup) { head = `<tr><td colspan="2" class="group-title">${o.group}</td></tr>`; lastGroup = o.group; }
+    let field;
+    if (o.type === 'boolean') {
+      field = `<input type="checkbox" data-opt="${o.key}" ${o.value ? 'checked' : ''}>`;
+    } else if (o.type === 'keywords') {
+      field = `<input type="text" data-opt="${o.key}" value="${(o.value || []).join(' ')}" placeholder="スペース区切り（空=すべて）">`;
+    } else if (o.type === 'columns') {
+      field = `<input type="text" data-opt="${o.key}" class="opt-value" value="${o.value == null ? '自動' : o.value}">`;
+    } else {
+      const step = o.type === 'decimal' ? '0.1' : '1';
+      field = `<input type="number" data-opt="${o.key}" class="opt-value" step="${step}" min="${o.min}" max="${o.max}" value="${o.raw}">`;
+    }
+    return head + `<tr><td>${o.label}${o.unit === 'sec' ? '<span class="muted">（秒）</span>' : ''}</td><td style="width:220px">${field}</td></tr>`;
+  }).join('');
+}
+
+// ---- 操作 ----
+$('#btnScrape').onclick = async () => {
+  const tabs = [];
+  if ($('#tabRecommend').checked) tabs.push('recommend');
+  if ($('#tabFollowing').checked) tabs.push('following');
+  if (!tabs.length) return toast('収集する欄を1つ以上選んでください', 'err');
+  try { await api('/api/run/scrape', { tabs }); } catch (e) { toast(e.message, 'err'); }
+};
+$('#btnCancel').onclick = () => api('/api/cancel', {}).catch(() => {});
+$('#btnShutdown').onclick = async () => {
+  if (!confirm('アプリを終了しますか？')) return;
+  await api('/api/shutdown', {}).catch(() => {});
+  document.body.innerHTML = '<div style="padding:40px;font-size:16px">終了しました。このタブは閉じて大丈夫です。</div>';
+};
+
+$('#btnExportFollowing').onclick = () => api('/api/run/exportFollowing', {}).catch((e) => toast(e.message, 'err'));
+$('#btnCollectRecommend').onclick = () =>
+  api('/api/run/collectRecommend', { max: Number($('#recommendMax').value) }).catch((e) => toast(e.message, 'err'));
+$('#btnRefreshLists').onclick = () => refresh();
+$('#btnMigrate').onclick = async () => {
+  const handles = $('#handlesInput').value.trim();
+  const listPath = $('#listSelect').value;
+  if (!handles && !listPath) return toast('一覧を選ぶか、@handle を入力してください', 'err');
+  const count = handles ? handles.split(/[\s,]+/).filter(Boolean).length : (STATE.lists.find((l) => l.path === listPath)?.count ?? 0);
+  if (!confirm(`いま使用中のアカウントで、最大 ${STATE.settings.options.find((o) => o.key === 'maxFollowsPerRun').value} 件フォローします。\n対象: ${count} 件\n\n実行しますか？`)) return;
+  try { await api('/api/run/migrate', handles ? { handles } : { listPath }); } catch (e) { toast(e.message, 'err'); }
+};
+
+$('#btnOpenViews').onclick = () => {
+  const indexes = [...document.querySelectorAll('.viewPick:checked')].map((c) => Number(c.value));
+  api('/api/run/multiview', { indexes }).catch((e) => toast(e.message, 'err'));
+};
+$('#btnCloseViews').onclick = () => api('/api/multiview/close', {}).then(refresh).catch((e) => toast(e.message, 'err'));
+$('#btnGotoAll').onclick = () =>
+  api('/api/multiview/goto', { target: $('#gotoTarget').value })
+    .then((r) => { toast(r.failed ? `移動しました（${r.failed}件失敗）` : '全ウィンドウを移動しました', r.failed ? '' : 'ok'); refresh(); })
+    .catch((e) => toast(e.message, 'err'));
+$('#btnReloadAll').onclick = () =>
+  api('/api/multiview/reload', {}).then(() => toast('再読み込みしました', 'ok')).catch((e) => toast(e.message, 'err'));
+
+$('#btnAddAccount').onclick = async () => {
+  try {
+    await api('/api/accounts/add', {
+      label: $('#newLabel').value, username: $('#newUsername').value, password: $('#newPassword').value,
+    });
+    $('#newLabel').value = $('#newUsername').value = $('#newPassword').value = '';
+    toast('追加しました', 'ok');
+    refresh();
+  } catch (e) { toast(e.message, 'err'); }
+};
+
+$('#accountRows').addEventListener('click', async (e) => {
+  const del = e.target.closest('[data-del]');
+  const lg = e.target.closest('[data-login]');
+  try {
+    if (del) {
+      if (!confirm('このアカウントを削除しますか？')) return;
+      await api('/api/accounts/delete', { index: Number(del.dataset.del) });
+      toast('削除しました', 'ok'); refresh();
+    } else if (lg) {
+      await api('/api/accounts/login', { index: Number(lg.dataset.login) });
+      toast('ブラウザでログインしてください');
+    }
+  } catch (err) { toast(err.message, 'err'); }
+});
+$('#accountRows').addEventListener('change', async (e) => {
+  const sel = e.target.closest('[data-select]');
+  if (!sel) return;
+  try { await api('/api/accounts/select', { index: Number(sel.dataset.select) }); refresh(); }
+  catch (err) { toast(err.message, 'err'); }
+});
+
+$('#btnPickFolder').onclick = async () => {
+  try { const r = await api('/api/settings/output-dir', { pick: true }); $('#outputDir').value = r.settings.outputDir; toast('保存先を変更しました', 'ok'); refresh(); }
+  catch (e) { toast(e.message, 'err'); }
+};
+$('#btnSaveOutputDir').onclick = async () => {
+  try { await api('/api/settings/output-dir', { path: $('#outputDir').value }); toast('保存先を変更しました', 'ok'); refresh(); }
+  catch (e) { toast(e.message, 'err'); }
+};
+$('#btnResetSettings').onclick = async () => {
+  if (!confirm('すべての設定を既定値に戻しますか？（アカウント情報は消えません）')) return;
+  await api('/api/settings/reset', {});
+  toast('既定値に戻しました', 'ok'); refresh();
+};
+
+// 設定値の変更（入力を離れた時点で保存）
+$('#optionRows').addEventListener('change', async (e) => {
+  const el = e.target.closest('[data-opt]');
+  if (!el) return;
+  const value = el.type === 'checkbox' ? (el.checked ? 'y' : 'n') : el.value;
+  try {
+    let r = await api('/api/settings/option', { key: el.dataset.opt, value });
+    if (r.needConfirm) {
+      if (!confirm(r.warning + '\n\nこの値で設定しますか？')) { refresh(); return; }
+      r = await api('/api/settings/option', { key: el.dataset.opt, value, confirm: true });
+    }
+    toast('保存しました', 'ok');
+    refresh();
+  } catch (err) {
+    toast(err.message, 'err');
+    refresh();
+  }
+});
+
+refresh().catch((e) => toast(e.message, 'err'));
+setInterval(() => { if (!STATE?.job?.running) refresh().catch(() => {}); }, 10000);
+</script>
+</body>
+</html>

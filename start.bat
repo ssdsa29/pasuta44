@@ -35,8 +35,10 @@ if not exist "%USERPROFILE%\AppData\Local\ms-playwright" (
   call npx playwright install chromium
 )
 
-REM --- アプリ起動 ---
-node src\index.js
+REM --- アプリ起動(操作画面がブラウザで開きます) ---
+echo 操作画面をブラウザで開いています...
+echo.
+node src\server.js
 
 echo.
 echo 終了しました。このウィンドウは閉じても大丈夫です。

@@ -7,6 +7,7 @@ import { existsSync } from 'node:fs';
 import { CONFIG } from './config.js';
 import { extractUserCellsInPage, extractTweetsInPage } from './extract.js';
 import { humanScroll, humanPause, humanMouseMove, sleep, randInt } from './humanize.js';
+import { isCancelled } from './cancel.js';
 import {
   safeGoto,
   waitForContent,
@@ -98,6 +99,7 @@ export async function exportFollowing(authStatePath, { max = CONFIG.maxFollowing
     let stagnant = 0;
     let recovered = 0;
     for (let i = 0; i < CONFIG.maxScrolls * 4 && found.size < max; i++) {
+      if (isCancelled()) break;
       let cells = [];
       try {
         cells = await page.evaluate(extractUserCellsInPage);
@@ -147,6 +149,7 @@ export async function collectRecommendAccounts(authStatePath, { max = 50 } = {})
     let stagnant = 0;
     let recovered = 0;
     for (let i = 0; i < CONFIG.maxScrolls * 2 && found.size < max; i++) {
+      if (isCancelled()) break;
       let tweets = [];
       try {
         tweets = await page.evaluate(extractTweetsInPage);
@@ -206,6 +209,10 @@ export async function followAccounts(authStatePath, handles, { max = CONFIG.maxF
 
     for (const handle of targets) {
       if (followed >= max) break;
+      if (isCancelled()) {
+        console.log('中止が要求されたため、フォローを止めます(残りは保存されます)。');
+        break;
+      }
       try {
         const state = await safeGoto(page, `https://x.com/${handle}`);
         await humanPause(1500, 3500);

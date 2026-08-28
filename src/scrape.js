@@ -10,6 +10,7 @@ import { CONFIG } from './config.js';
 import { extractTweetsInPage, toOriginalImageUrl, imageExtension } from './extract.js';
 import { generateReport } from './report.js';
 import { humanScroll, humanPause } from './humanize.js';
+import { isCancelled } from './cancel.js';
 import {
   safeGoto,
   waitForContent,
@@ -105,6 +106,7 @@ async function collectFromTimeline(page, seenIds) {
   let recovered = 0; // 補正を試みた回数
 
   for (let i = 0; i < CONFIG.maxScrolls; i++) {
+    if (isCancelled()) break; // 中止が要求されたら、集めた分を返して終了
     // 抽出中にページが壊れることがあるため、失敗しても続行できるようにする
     let tweets = [];
     try {
@@ -257,6 +259,7 @@ async function scrapeTab(page, tabKey, runDir, seenIds, failures) {
 
     const tweets = [];
     for (const tweet of account.tweets.values()) {
+      if (isCancelled()) break;
       console.log(`@${handle}: ${tweet.url}`);
 
       // 1件の失敗で全体が止まらないよう、投稿ごとに保護する
@@ -365,6 +368,10 @@ export async function runScrape({
 
     try {
       while (remaining.length > 0) {
+        if (isCancelled()) {
+          console.log('中止が要求されたため、ここまでの結果を保存します。');
+          break;
+        }
         const tabKey = remaining[0];
         try {
           dataByTab[tabKey] = await scrapeTab(page, tabKey, runDir, seenIds, failures);
