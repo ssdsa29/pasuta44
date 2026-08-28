@@ -1,0 +1,18 @@
+{
+  "name": "x-timeline-scraper",
+  "version": "1.0.0",
+  "description": "X(Twitter)のおすすめ欄・フォロー欄から、APIを使わずに投稿テキスト(コメント)と画像を自動収集するツール",
+  "type": "module",
+  "scripts": {
+    "login": "node src/login.js",
+    "scrape": "node src/scrape.js",
+    "scrape:recommend": "node src/scrape.js --tabs recommend",
+    "scrape:following": "node src/scrape.js --tabs following"
+  },
+  "dependencies": {
+    "playwright": "^1.49.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
