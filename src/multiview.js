@@ -1,11 +1,11 @@
 // 複数アカウントを同時に表示するマルチビュー。
 // アカウントごとに独立したブラウザウィンドウを開き、画面をタイル状に並べます。
 // セッションはアカウントごとに分かれているため、同時にログインしたまま操作できます。
-import { chromium } from 'playwright';
 import { execFile } from 'node:child_process';
 import { CONFIG } from './config.js';
 import { humanPause } from './humanize.js';
 import { cleanError, checkPageState } from './resilience.js';
+import { launchBrowser } from './browser.js';
 
 // 画面(作業領域)のサイズを調べる。取得できなければ一般的なサイズを使う。
 export async function detectScreenSize() {
@@ -70,9 +70,8 @@ export function computeGrid(count, screen, columns = null) {
 
 // 1アカウント分のウィンドウを開く
 async function openOne(account, statePath, pos, { headless = false } = {}) {
-  const browser = await chromium.launch({
+  const browser = await launchBrowser({
     headless,
-    executablePath: process.env.CHROMIUM_PATH || undefined,
     args: [
       `--window-position=${pos.x},${pos.y}`,
       `--window-size=${pos.width},${pos.height}`,

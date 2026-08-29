@@ -2,7 +2,6 @@
 //  - exportFollowing         … ログイン中アカウントの「フォロー中」一覧を取得
 //  - collectRecommendAccounts … おすすめ欄に出てくるアカウントを収集
 //  - followAccounts          … 一覧のアカウントを安全に(人間らしい間隔で)フォロー
-import { chromium } from 'playwright';
 import { existsSync } from 'node:fs';
 import { CONFIG } from './config.js';
 import { extractUserCellsInPage, extractTweetsInPage } from './extract.js';
@@ -18,16 +17,14 @@ import {
   SessionExpiredError,
   FollowLimitError,
 } from './resilience.js';
+import { launchBrowser } from './browser.js';
 
 // 共通: ログイン済みブラウザを開く
 async function openContext(authStatePath) {
   if (!existsSync(authStatePath)) {
     throw new Error(`認証情報 (${authStatePath}) が見つかりません。先にログインしてください。`);
   }
-  const browser = await chromium.launch({
-    headless: CONFIG.headless,
-    executablePath: process.env.CHROMIUM_PATH || undefined,
-  });
+  const browser = await launchBrowser({ headless: CONFIG.headless });
   const context = await browser.newContext({
     storageState: authStatePath,
     locale: 'ja-JP',

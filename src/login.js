@@ -1,13 +1,13 @@
 // Xへのログインを行い、セッション(Cookie)を保存します。
 //  - アカウント情報(パスワード)が登録済みなら自動ログインを試みます
 //  - 未登録、または自動ログインが確認画面などで止まったら、手動ログインに切り替わります
-import { chromium } from 'playwright';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { CONFIG } from './config.js';
 import { authStatePathFor, getActiveAccount, loadSettings } from './settings.js';
 import { humanType, humanPause, sleep } from './humanize.js';
+import { launchBrowser } from './browser.js';
 
 const LOGIN_TIMEOUT_MS = 5 * 60 * 1000; // 手動ログインは5分以内に
 
@@ -92,11 +92,8 @@ async function clickNext(page) {
 // メインのログイン処理。account を渡すと自動ログインを試みる。
 export async function login({ account = null, authStatePath = null, headless = false } = {}) {
   const statePath = authStatePath || CONFIG.authStatePath;
-  const browser = await chromium.launch({
-    // 自動ログインでも、確認画面が出たら人が操作できるよう既定は表示する
-    headless,
-    executablePath: process.env.CHROMIUM_PATH || undefined,
-  });
+  // 自動ログインでも、確認画面が出たら人が操作できるよう既定は表示する
+  const browser = await launchBrowser({ headless });
   const context = await browser.newContext({
     locale: 'ja-JP',
     viewport: { width: 1280, height: 900 },

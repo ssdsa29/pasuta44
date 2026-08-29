@@ -1,7 +1,6 @@
 // メインスクリプト: おすすめ欄・フォロー欄から約10アカウント分の投稿(コメント)と画像を収集します。
 // かんたん実行: npm start(対話式)
 // 直接実行:    npm run scrape / scrape:recommend / scrape:following
-import { chromium } from 'playwright';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
@@ -12,6 +11,7 @@ import { generateReport } from './report.js';
 import { humanScroll, humanPause } from './humanize.js';
 import { isCancelled } from './cancel.js';
 import { attachMediaCapture, downloadVideo } from './media.js';
+import { launchBrowser } from './browser.js';
 import {
   safeGoto,
   waitForContent,
@@ -420,11 +420,9 @@ export async function runScrape({
   let reloginLeft = onSessionExpired ? 1 : 0; // 自動再ログインは1回まで
 
   while (remaining.length > 0) {
-    const browser = await chromium.launch({
-      headless: CONFIG.headless,
-      // 通常は自動検出。環境変数 CHROMIUM_PATH でブラウザ実行ファイルを指定可能
-      executablePath: process.env.CHROMIUM_PATH || undefined,
-    });
+    // 通常は付属ブラウザを自動検出。CHROMIUM_PATH での指定や、起動不能時の
+    // Chrome/Edge への切り替えは launchBrowser 側で行う
+    const browser = await launchBrowser({ headless: CONFIG.headless });
     const context = await browser.newContext({
       storageState: statePath,
       locale: 'ja-JP',
