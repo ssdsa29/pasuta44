@@ -25,6 +25,9 @@ if hasattr(sys.stdout, "reconfigure"):
     except Exception:
         pass
 
+# どのフォルダから実行してもプロジェクトルートを基準にする
+os.chdir(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 SCRIPT_MD = "script/ome-rookie-detective-60cuts.md"
 OUT_DIR = "outputs/keyframes"
 

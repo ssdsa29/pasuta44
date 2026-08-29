@@ -21,6 +21,9 @@ if hasattr(sys.stdout, "reconfigure"):
     except Exception:
         pass
 
+# どのフォルダから実行してもプロジェクトルートを基準にする
+os.chdir(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 SERVER = os.environ.get("COMFYUI_SERVER", "http://127.0.0.1:8188")
 SCRIPT_MD = "script/ome-rookie-detective-60cuts.md"
 KF_DIR = "outputs/keyframes"
