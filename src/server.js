@@ -14,7 +14,7 @@ import { runScrape } from './scrape.js';
 import { pickFolderDialog } from './pickFolder.js';
 import { exportFollowing, collectRecommendAccounts, followAccounts } from './follows.js';
 import { saveAccountList, listSavedFiles, readHandles } from './lists.js';
-import { SessionExpiredError, cleanError } from './resilience.js';
+import { SessionExpiredError, RateLimitedError, cleanError } from './resilience.js';
 import { openMultiView, gotoAll, reloadAll, statusAll, closeAll, checkLoginAll, detectScreenSize } from './multiview.js';
 import {
   loadSettings, saveSettings, getActiveAccount, authStatePathFor,
@@ -35,6 +35,10 @@ const MIME = {
 let settings = loadSettings();
 applyOptions(settings, CONFIG);
 let multiViews = []; // 同時表示中のウィンドウ
+
+// Xにログインを制限されたら、しばらくは再ログインを受け付けない(短時間の連打で制限が延びるのを防ぐ)
+const LOGIN_COOLDOWN_MS = 30 * 60 * 1000; // 30分
+let loginCooldownUntil = 0;
 
 const outputRoot = () => settings.outputDir || CONFIG.outputDir;
 
@@ -363,7 +367,22 @@ async function handleApi(req, res, url) {
   if (path === '/api/accounts/login') {
     const account = body.index === -1 ? null : settings.accounts[body.index];
     if (body.index !== -1 && !account) return json(res, { error: 'アカウントが見つかりません。' }, 400);
-    runJob('ログイン', () => login({ account, authStatePath: authStatePathFor(account) })).catch(() => {});
+    // 直前にログイン制限を食らっていたら、一定時間は開かせない
+    const remain = loginCooldownUntil - Date.now();
+    if (remain > 0) {
+      const min = Math.ceil(remain / 60000);
+      return json(
+        res,
+        { error: `Xにログインを制限されています。あと約${min}分は空けてください(短時間に何度も試すと制限が延びます)。` },
+        429
+      );
+    }
+    runJob('ログイン', () => login({ account, authStatePath: authStatePathFor(account) })).catch((err) => {
+      // ログイン制限を検知したらクールダウンを設定する
+      if (err instanceof RateLimitedError) {
+        loginCooldownUntil = Date.now() + LOGIN_COOLDOWN_MS;
+      }
+    });
     return json(res, { ok: true });
   }
 

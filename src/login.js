@@ -8,10 +8,52 @@ import { CONFIG } from './config.js';
 import { authStatePathFor, getActiveAccount, loadSettings } from './settings.js';
 import { humanType, humanPause, sleep } from './humanize.js';
 import { launchBrowser } from './browser.js';
+import { RateLimitedError } from './resilience.js';
 
 const LOGIN_TIMEOUT_MS = 15 * 60 * 1000; // 手動ログインは15分以内に(2段階認証や確認画面に時間がかかるため)
 
-// ログイン完了(ホームのタイムライン表示)を待つ
+// ログイン画面に出ている文言から、待っても解決しない問題を見分ける。
+// 'ratelimit' … Xがログインを一時的に制限している(待つしかない/これ以上試すと逆効果)
+// 'password'  … パスワードが違う
+// null        … 特に問題なし(処理中 / 追加認証の途中など)
+export function classifyLoginPage(text) {
+  const t = String(text || '');
+  if (/ログインを一時的に制限|一時的にロック|Too many|しばらくしてから|try again later|Rate limit|凍結されています|Suspended/i.test(t)) {
+    return 'ratelimit';
+  }
+  if (/パスワードが間違って|Wrong password|正しいパスワード|incorrect password/i.test(t)) {
+    return 'password';
+  }
+  return null;
+}
+
+// ログイン成功を待つ。待っている間もログイン画面の文言を監視し、
+// 「一時的に制限」などの解決しない状態を見つけたら、待ち続けずに種類の分かるエラーを投げる。
+async function waitForLoginOutcome(page, timeout) {
+  const SUCCESS =
+    '[data-testid="primaryColumn"] [data-testid="tweet"], [data-testid="SideNav_AccountSwitcher_Button"]';
+  const deadline = Date.now() + timeout;
+  while (Date.now() < deadline) {
+    // 成功要素が出れば完了
+    try {
+      await page.waitForSelector(SUCCESS, { timeout: 3000 });
+      return;
+    } catch {
+      // まだ出ていない。制限文言が出ていないか確認する
+    }
+    const text = await page
+      .evaluate(() => (document.body?.innerText || '').slice(0, 3000))
+      .catch(() => '');
+    if (classifyLoginPage(text) === 'ratelimit') {
+      throw new RateLimitedError(
+        'Xがログインを一時的に制限しています。30分〜1時間ほど空けてから、1回だけログインし直してください(短時間に何度も試すと制限が延びます)。'
+      );
+    }
+  }
+  throw new Error('ログインがタイムアウトしました。もう一度お試しください。');
+}
+
+// 旧名の互換(自動ログインの一部で使用)
 async function waitForLoggedIn(page, timeout) {
   await page.waitForSelector(
     '[data-testid="primaryColumn"] [data-testid="tweet"], [data-testid="SideNav_AccountSwitcher_Button"]',
@@ -61,11 +103,13 @@ async function tryAutoLogin(page, account) {
       } else {
         console.log('追加の認証(2段階認証など)が必要なようです。ブラウザで操作を完了してください...');
       }
-      // どの場合も、人が操作すれば続行できるので待つ
-      await waitForLoggedIn(page, LOGIN_TIMEOUT_MS);
+      // 人が操作すれば続行できるので待つ。ただし制限文言が出たら待たずに中断する。
+      await waitForLoginOutcome(page, LOGIN_TIMEOUT_MS);
       return true;
     }
   } catch (err) {
+    // ログイン制限は手動で試しても同じく弾かれるので、握りつぶさず上へ伝える
+    if (err instanceof RateLimitedError) throw err;
     console.warn(`自動ログインに失敗しました: ${err.message}`);
     return false;
   }
@@ -103,17 +147,24 @@ export async function login({ account = null, authStatePath = null, headless = f
   let success = false;
   if (account && account.password) {
     console.log(`アカウント「${account.label || account.username}」で自動ログインを試みます...`);
-    success = await tryAutoLogin(page, account);
+    try {
+      success = await tryAutoLogin(page, account);
+    } catch (err) {
+      await browser.close();
+      throw err; // ログイン制限など、待っても解決しないエラー
+    }
   }
 
   if (!success) {
     console.log('手動でXにログインしてください(ブラウザが開いています)...');
     await page.goto('https://x.com/login').catch(() => {});
     try {
-      await waitForLoggedIn(page, LOGIN_TIMEOUT_MS);
+      await waitForLoginOutcome(page, LOGIN_TIMEOUT_MS);
       success = true;
-    } catch {
+    } catch (err) {
       await browser.close();
+      // 制限エラーはそのまま(理由が伝わる)、それ以外はタイムアウト扱い
+      if (err instanceof RateLimitedError) throw err;
       throw new Error('ログインがタイムアウトしました。もう一度お試しください。');
     }
   }

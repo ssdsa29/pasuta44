@@ -12,6 +12,7 @@ import {
   SessionExpiredError,
   FollowLimitError,
 } from '../src/resilience.js';
+import { classifyLoginPage } from '../src/login.js';
 
 let pass = 0;
 let fail = 0;
@@ -61,6 +62,16 @@ console.log('\n[2] 再試行の判定');
 check('通信エラーは再試行する', isRetryableError(new Error('net::ERR_CONNECTION_RESET at https://x.com')));
 check('タイムアウトは再試行する', isRetryableError(new Error('Timeout 30000ms exceeded')));
 check('それ以外は再試行しない', !isRetryableError(new Error('想定外の失敗')));
+
+// ---- 2b. ログイン画面の文言から問題を見分ける ------------------------------
+console.log('\n[2b] ログイン画面の判定');
+check('ログイン制限を検知', classifyLoginPage('ログインを一時的に制限しました。しばらくしてからやりなおしてください。') === 'ratelimit');
+check('英語のレート制限も検知', classifyLoginPage('Too many login attempts. Try again later.') === 'ratelimit');
+check('凍結も制限扱い', classifyLoginPage('Your account is suspended') === 'ratelimit');
+check('パスワード誤りを検知', classifyLoginPage('パスワードが間違っています') === 'password');
+check('通常のログイン画面は問題なし', classifyLoginPage('電話番号 またはメールアドレス') === null);
+check('空文字でも落ちない', classifyLoginPage('') === null);
+check('null でも落ちない', classifyLoginPage(null) === null);
 
 // ---- 3. 自動再試行の動作 ---------------------------------------------------
 console.log('\n[3] 自動再試行');
