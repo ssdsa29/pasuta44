@@ -103,6 +103,7 @@
         <span class="muted" id="scrapeSummary"></span>
       </div>
       <button class="btn" id="btnScrape">収集を開始</button>
+      <p class="hint" id="runGateNote" style="margin-top:10px"></p>
     </div>
     <div class="card">
       <h2>実行状況</h2>
@@ -333,6 +334,18 @@ async function refresh() {
   if (STATE.lastTabs) {
     $('#tabRecommend').checked = STATE.lastTabs.includes('recommend');
     $('#tabFollowing').checked = STATE.lastTabs.includes('following');
+  }
+  // 前回の収集からの間隔(1日1回の運用を守るための案内)
+  const gate = STATE.runGate;
+  const note = $('#runGateNote');
+  if (gate && !gate.ok) {
+    note.textContent = `⚠️ 前回の収集から間もないため、あと約${gate.remainHours}時間は実行できません。`;
+    $('#btnScrape').disabled = true;
+  } else {
+    note.textContent = STATE.lastScrapeAt
+      ? `前回の収集: ${new Date(STATE.lastScrapeAt).toLocaleString('ja-JP')}`
+      : '';
+    $('#btnScrape').disabled = false;
   }
   $('#runs').innerHTML = STATE.runs.length
     ? STATE.runs.map((r) => `<li><a href="${r.url}" target="_blank">${r.name} のレポート</a></li>`).join('')

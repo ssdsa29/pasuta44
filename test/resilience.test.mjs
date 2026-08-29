@@ -309,6 +309,24 @@ check('設定が空なら既定値のまま', cfg2.maxAccounts === 10);
 
 check('すべての設定項目が編集可能(スキーマに定義あり)', OPTION_SCHEMA.length >= 16);
 
+// 1日1回の運用を守る歯止め
+const { checkRunInterval } = await import('../src/settings.js');
+const HOUR = 3600000;
+const gateCfg = { minHoursBetweenRuns: 20 };
+const t = new Date('2026-08-29T12:00:00Z').getTime();
+check('初回はいつでも実行できる', checkRunInterval({ lastScrapeAt: null }, gateCfg, t).ok === true);
+check('直後は実行できない',
+  checkRunInterval({ lastScrapeAt: new Date(t - 1 * HOUR).toISOString() }, gateCfg, t).ok === false);
+check('あと何時間か分かる',
+  checkRunInterval({ lastScrapeAt: new Date(t - 1 * HOUR).toISOString() }, gateCfg, t).remainHours === 19);
+check('20時間経てば実行できる',
+  checkRunInterval({ lastScrapeAt: new Date(t - 20 * HOUR).toISOString() }, gateCfg, t).ok === true);
+check('0を指定すれば制限しない',
+  checkRunInterval({ lastScrapeAt: new Date(t).toISOString() }, { minHoursBetweenRuns: 0 }, t).ok === true);
+check('壊れた日時でも止まらない',
+  checkRunInterval({ lastScrapeAt: 'こわれた値' }, gateCfg, t).ok === true);
+check('間隔の設定が編集できる', byKey('minHoursBetweenRuns') !== undefined);
+
 // スクロールの振れ幅・ブラウザを開いたままにする設定
 check('スクロールの振れ幅が設定できる', byKey('scrollVariance') !== undefined);
 check('振れ幅は0を受け付ける(一定のリズム)', parseOption(byKey('scrollVariance'), '0').value === 0);

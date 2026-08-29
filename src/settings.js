@@ -19,6 +19,8 @@ const DEFAULTS = {
   options: {},
   // 前回選んだ収集対象タブ(次回の既定になります)
   lastTabs: null,
+  // 前回、収集を実行した時刻(連続実行の歯止めに使います)
+  lastScrapeAt: null,
 };
 
 export function loadSettings() {
@@ -33,6 +35,18 @@ export function loadSettings() {
 export function saveSettings(settings) {
   mkdirSync(dirname(SETTINGS_PATH), { recursive: true });
   writeFileSync(SETTINGS_PATH, JSON.stringify(settings, null, 2), 'utf8');
+}
+
+// 前回の収集から十分に時間が空いたか調べる。
+// 空いていなければ、あと何時間待てばよいかを返す(1日1回の運用を守るための歯止め)。
+export function checkRunInterval(settings, CONFIG, now = Date.now()) {
+  const hours = Number(CONFIG.minHoursBetweenRuns) || 0;
+  if (hours <= 0 || !settings.lastScrapeAt) return { ok: true };
+  const elapsedMs = now - new Date(settings.lastScrapeAt).getTime();
+  if (!Number.isFinite(elapsedMs) || elapsedMs < 0) return { ok: true };
+  const remainMs = hours * 3600000 - elapsedMs;
+  if (remainMs <= 0) return { ok: true };
+  return { ok: false, remainHours: Math.ceil(remainMs / 3600000) };
 }
 
 // 使用中アカウントを返す(なければ null = 手動ログイン)
@@ -75,6 +89,7 @@ export const OPTION_SCHEMA = [
   { key: 'keywords', group: '収集', label: 'キーワード絞り込み', type: 'keywords' },
   { key: 'maxRecommendAccounts', group: '収集', label: 'おすすめ欄から集めるアカウント数', type: 'number', min: 1, max: 500 },
   { key: 'maxScrolls', group: '収集', label: '最大スクロール回数', type: 'number', min: 1, max: 500 },
+  { key: 'minHoursBetweenRuns', group: '収集', label: '次の収集まで空ける時間(時間/0で制限なし)', type: 'number', min: 0, max: 168 },
   { key: 'betweenAccountsMs', group: '収集', label: 'アカウントを切り替える間隔(秒)', type: 'number', min: 0, max: 600, unit: 'sec', warnUnder: 3 },
   { key: 'betweenRepliesMs', group: '収集', label: 'コメントを開く間隔(秒)', type: 'number', min: 0, max: 600, unit: 'sec', warnUnder: 2 },
 

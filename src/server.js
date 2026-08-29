@@ -19,7 +19,7 @@ import { isCancelled } from './cancel.js';
 import { SessionExpiredError, RateLimitedError, cleanError } from './resilience.js';
 import { openMultiView, gotoAll, reloadAll, statusAll, closeAll, checkLoginAll, detectScreenSize } from './multiview.js';
 import {
-  loadSettings, saveSettings, getActiveAccount, authStatePathFor,
+  loadSettings, saveSettings, getActiveAccount, authStatePathFor, checkRunInterval,
   OPTION_SCHEMA, formatOption, parseOption, warnFor, applyOptions, setOption,
 } from './settings.js';
 import { runJob, subscribe, getState, cancelJob, log } from './jobs.js';
@@ -159,9 +159,18 @@ async function withSessionRecovery(fn) {
 
 // ---- 各機能の実行 ----------------------------------------------------------
 const actions = {
-  async scrape({ tabs }) {
+  async scrape({ tabs, force }) {
+    // 1日1回の運用を守るための歯止め(設定「次の収集まで空ける時間」)
+    const gap = checkRunInterval(settings, CONFIG);
+    if (!gap.ok && !force) {
+      throw new Error(
+        `前回の収集から間もないため、まだ実行しません。あと約${gap.remainHours}時間空けてください。` +
+        '（短い間隔で繰り返すとアカウント制限のリスクが高まります）'
+      );
+    }
     const use = Array.isArray(tabs) && tabs.length ? tabs : ['recommend', 'following'];
     settings.lastTabs = use;
+    settings.lastScrapeAt = new Date().toISOString();
     saveSettings(settings);
     const statePath = await ensureSession();
     const r = await runScrape({
@@ -294,6 +303,9 @@ async function handleApi(req, res, url) {
       runs: await runsView(),
       multiview: { open: multiViews.length, views: multiViews.length ? await statusAll(multiViews) : [] },
       lastTabs: settings.lastTabs,
+      // 次の収集まで待つ必要があるか(1日1回の運用を守るための案内)
+      runGate: checkRunInterval(settings, CONFIG),
+      lastScrapeAt: settings.lastScrapeAt,
       platform: process.platform,
     });
   }
