@@ -17,6 +17,7 @@ import argparse
 import json
 import os
 import random
+import shutil
 import sys
 import time
 import urllib.parse
@@ -24,6 +25,9 @@ import urllib.request
 import uuid
 
 DEFAULT_SERVER = os.environ.get("COMFYUI_SERVER", "http://127.0.0.1:8188")
+DEFAULT_INPUT_DIR = os.environ.get(
+    "COMFYUI_INPUT_DIR", r"C:\claud\ComfyUI_windows_portable\ComfyUI\input"
+)
 
 
 def load_workflow(path):
@@ -37,7 +41,7 @@ def load_workflow(path):
     return wf
 
 
-def patch_workflow(wf, prompt, width, height):
+def patch_workflow(wf, prompt, width, height, image_name=None, denoise=None):
     text_nodes = []
     for node_id, node in wf.items():
         cls = node.get("class_type", "")
@@ -45,6 +49,10 @@ def patch_workflow(wf, prompt, width, height):
         title = node.get("_meta", {}).get("title", "").lower()
         if "text" in inputs and "TextEncode" in cls:
             text_nodes.append((node_id, node, title))
+        if cls == "LoadImage" and image_name:
+            inputs["image"] = image_name
+        if denoise is not None and inputs.get("denoise", 1.0) < 1.0:
+            inputs["denoise"] = denoise
         if "width" in inputs and "height" in inputs:
             inputs["width"] = width
             inputs["height"] = height
@@ -80,9 +88,29 @@ def main():
     ap.add_argument("--workflow", default="workflows/krea2-t2i-api.json")
     ap.add_argument("--server", default=DEFAULT_SERVER)
     ap.add_argument("--out", default="outputs")
+    ap.add_argument("--image", help="LoadImageノードに渡す入力画像（face-refine等で使用）")
+    ap.add_argument(
+        "--denoise", type=float,
+        help="refine系ワークフローのKSampler denoiseを上書き（1.0未満のノードのみ対象）",
+    )
     args = ap.parse_args()
 
-    wf = patch_workflow(load_workflow(args.workflow), args.prompt, args.width, args.height)
+    image_name = None
+    if args.image:
+        src = os.path.abspath(args.image)
+        if not os.path.isfile(src):
+            sys.exit(f"エラー: 画像が見つかりません: {src}")
+        os.makedirs(DEFAULT_INPUT_DIR, exist_ok=True)
+        image_name = os.path.basename(src)
+        dest = os.path.join(DEFAULT_INPUT_DIR, image_name)
+        if os.path.abspath(dest) != src:
+            shutil.copyfile(src, dest)
+        print(f"input image: {image_name}")
+
+    wf = patch_workflow(
+        load_workflow(args.workflow), args.prompt, args.width, args.height,
+        image_name, args.denoise,
+    )
 
     client_id = str(uuid.uuid4())
     res = api(args.server, "/prompt", {"prompt": wf, "client_id": client_id})
