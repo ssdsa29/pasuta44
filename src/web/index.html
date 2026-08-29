@@ -139,6 +139,21 @@
       </div>
     </div>
     <div class="card">
+      <h2>公式アーカイブから一覧をつくる（おすすめ・安全）</h2>
+      <p class="hint">
+        Xの「設定 → アカウント → データのアーカイブをダウンロード」で受け取ったファイルから、
+        フォロー中の一覧を作ります。ログインも自動収集もしないので、アカウントに負担をかけません。
+        （アーカイブの準備には X 側で24〜48時間かかります）
+      </p>
+      <div class="row">
+        <input type="text" id="archivePath" placeholder="アーカイブを展開したフォルダ（例: C:\Users\あなた\Downloads\twitter-archive）">
+      </div>
+      <div class="row">
+        <button class="btn" id="btnArchiveFollowing">フォロー中の一覧を作る</button>
+        <button class="btn ghost" id="btnArchiveFollowers">フォロワーの一覧を作る</button>
+      </div>
+    </div>
+    <div class="card">
       <h2>アカウントを移植（安全に一括フォロー）</h2>
       <p class="hint">
         いま使用中のアカウントでフォローします。別アカウントへ移す場合は、先に「アカウント」タブで切り替えてください。
@@ -409,6 +424,13 @@ $('#btnShutdown').onclick = async () => {
 };
 
 $('#btnExportFollowing').onclick = () => api('/api/run/exportFollowing', {}).catch((e) => toast(e.message, 'err'));
+const runArchive = (kind) => {
+  const path = $('#archivePath').value.trim();
+  if (!path) return toast('アーカイブのフォルダを入力してください', 'err');
+  api('/api/run/archiveFollowing', { path, kind }).catch((e) => toast(e.message, 'err'));
+};
+$('#btnArchiveFollowing').onclick = () => runArchive('following');
+$('#btnArchiveFollowers').onclick = () => runArchive('follower');
 $('#btnCollectRecommend').onclick = () =>
   api('/api/run/collectRecommend', { max: Number($('#recommendMax').value) }).catch((e) => toast(e.message, 'err'));
 $('#btnRefreshLists').onclick = () => refresh();

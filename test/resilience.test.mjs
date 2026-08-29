@@ -2,7 +2,7 @@
 // ネットワークやXへの接続は不要です(すべて手元で完結します)。
 import { createServer } from 'node:http';
 import { writeFile } from 'node:fs/promises';
-import { readFileSync, mkdirSync, rmSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -437,6 +437,41 @@ check('動画の場所が正しく組み立てられる', view.items[0].videos[0
 check('保存できなかった動画は数だけ記録', view.items[1].missingVideos === 1 && view.items[1].videos.length === 0);
 check('コメントは元の投稿とひも付く', view.items[2].onAccount === 'alice' && view.items[2].parentUrl === 'u1');
 check('アカウント一覧が作られる', view.accounts.length === 1 && view.accounts[0].handle === 'alice');
+
+// ---- 8. 公式アーカイブからフォロー中一覧を作る -----------------------------
+console.log('\n[8] 公式アーカイブの読み取り');
+const { parseArchiveJs, extractAccountIds, handleFromUrl, findArchiveFile } = await import('../src/archive.js');
+
+// Xのアーカイブ(data/following.js)と同じ形のデータ
+const followingJs = 'window.YTD.following.part0 = [\n'
+  + '  { "following" : { "accountId" : "1111111111111111111", "userLink" : "https://twitter.com/intent/user?user_id=1111111111111111111" } },\n'
+  + '  { "following" : { "accountId" : "22222222", "userLink" : "https://twitter.com/intent/user?user_id=22222222" } }\n'
+  + ']';
+check('アーカイブのファイルを読める', parseArchiveJs(followingJs).length === 2);
+check('アカウントIDを取り出せる',
+  JSON.stringify(extractAccountIds(followingJs)) === JSON.stringify(['1111111111111111111', '22222222']));
+check('フォロワー側の形式も読める',
+  extractAccountIds('window.YTD.follower.part0 = [{"follower":{"accountId":"333"}}]')[0] === '333');
+check('同じIDは1件にまとめる',
+  extractAccountIds('window.YTD.following.part0 = [{"following":{"accountId":"7"}},{"following":{"accountId":"7"}}]').length === 1);
+check('壊れたファイルでも落ちない', extractAccountIds('こわれています') .length === 0);
+check('空でも落ちない', extractAccountIds('') .length === 0);
+
+// 転送先URLから @ユーザー名 を取り出す
+check('転送先から名前を取れる', handleFromUrl('https://x.com/jack') === 'jack');
+check('twitter.com でも取れる', handleFromUrl('https://twitter.com/jack/status/1') === 'jack');
+check('ユーザーでないページは除く', handleFromUrl('https://x.com/i/flow/login') === null);
+check('404ページを名前と間違えない', handleFromUrl('https://x.com/404') === null);
+check('規約ページを名前と間違えない', handleFromUrl('https://x.com/tos') === null);
+check('関係ないURLは null', handleFromUrl('https://example.com/jack') === null);
+
+// フォルダ指定でも data/following.js を見つけられる
+const archDir = join(tmpdir(), `x-archive-test-${Date.now()}`);
+mkdirSync(join(archDir, 'data'), { recursive: true });
+writeFileSync(join(archDir, 'data', 'following.js'), followingJs, 'utf8');
+check('フォルダからファイルを見つけられる', String(findArchiveFile(archDir, 'following')).endsWith('following.js'));
+check('無ければ null', findArchiveFile(join(archDir, 'data'), 'follower') === null);
+rmSync(archDir, { recursive: true, force: true });
 
 // ---- 結果 ------------------------------------------------------------------
 console.log(`\n=== ${pass} 件成功 / ${fail} 件失敗 ===`);

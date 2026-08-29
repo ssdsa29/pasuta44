@@ -14,6 +14,8 @@ import { runScrape, closeOpenedBrowsers } from './scrape.js';
 import { pickFolderDialog } from './pickFolder.js';
 import { exportFollowing, collectRecommendAccounts, followAccounts } from './follows.js';
 import { saveAccountList, listSavedFiles, readHandles } from './lists.js';
+import { convertArchiveList } from './archive.js';
+import { isCancelled } from './cancel.js';
 import { SessionExpiredError, RateLimitedError, cleanError } from './resilience.js';
 import { openMultiView, gotoAll, reloadAll, statusAll, closeAll, checkLoginAll, detectScreenSize } from './multiview.js';
 import {
@@ -181,6 +183,31 @@ const actions = {
     const saved = saveAccountList(outputRoot(), `following_${owner}`, accounts, { source: 'following', owner });
     log(`${accounts.length} 件を保存しました: ${saved.txtPath}`);
     return { count: accounts.length, file: saved.txtPath };
+  },
+
+  // Xの公式アーカイブ(データのダウンロード)から、フォロー中一覧を作る。
+  // ログインも自動収集も行わないため、アカウントに負担をかけない。
+  async archiveFollowing({ path: archivePath, kind }) {
+    const target = String(archivePath ?? '').trim();
+    if (!target) throw new Error('アーカイブのフォルダ(またはファイル)を指定してください。');
+    if (!existsSync(target)) throw new Error(`見つかりません: ${target}`);
+
+    const which = kind === 'follower' ? 'follower' : 'following';
+    log('公式アーカイブから読み取ります(ログインは不要です)...');
+    const r = await convertArchiveList(target, {
+      kind: which,
+      isCancelled,
+      onProgress: ({ done, total, handle }) => {
+        if (handle) log(`[${done}/${total}] @${handle}`);
+        else if (done % 10 === 0) log(`[${done}/${total}] 変換中...`);
+      },
+    });
+
+    const owner = which === 'follower' ? 'archive_followers' : 'archive_following';
+    const saved = saveAccountList(outputRoot(), owner, r.accounts, { source: `archive_${which}`, from: r.file });
+    log(`${r.accounts.length} / ${r.total} 件を保存しました: ${saved.txtPath}`);
+    if (r.failures.length) log(`${r.failures.length} 件は名前を確認できませんでした(削除・凍結など)。`, 'warn');
+    return { count: r.accounts.length, total: r.total, failed: r.failures.length, file: saved.txtPath };
   },
 
   async collectRecommend({ max }) {
@@ -389,7 +416,7 @@ async function handleApi(req, res, url) {
   // --- 実行 ---
   if (path.startsWith('/api/run/')) {
     const key = path.slice('/api/run/'.length);
-    const names = { scrape: '収集', exportFollowing: 'フォロー中の出力', collectRecommend: 'おすすめ収集', migrate: 'アカウント移植', multiview: '同時表示' };
+    const names = { scrape: '収集', exportFollowing: 'フォロー中の出力', archiveFollowing: 'アーカイブから一覧を作る', collectRecommend: 'おすすめ収集', migrate: 'アカウント移植', multiview: '同時表示' };
     const action = actions[key];
     if (!action) return json(res, { error: '不明な操作です。' }, 400);
     if (getState().running) return json(res, { error: 'ほかの処理を実行中です。' }, 409);
