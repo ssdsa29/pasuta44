@@ -9,6 +9,7 @@ import { authStatePathFor, getActiveAccount, loadSettings } from './settings.js'
 import { humanType, humanPause, sleep } from './humanize.js';
 import { launchBrowser } from './browser.js';
 import { RateLimitedError } from './resilience.js';
+import { isCancelled } from './cancel.js';
 
 const LOGIN_TIMEOUT_MS = 15 * 60 * 1000; // 手動ログインは15分以内に(2段階認証や確認画面に時間がかかるため)
 
@@ -27,13 +28,18 @@ export function classifyLoginPage(text) {
   return null;
 }
 
-// ログイン成功を待つ。待っている間もログイン画面の文言を監視し、
-// 「一時的に制限」などの解決しない状態を見つけたら、待ち続けずに種類の分かるエラーを投げる。
-async function waitForLoginOutcome(page, timeout) {
+// ログイン成功を待つ。待っている間、次の3つも見張って、待ち続けずに抜ける:
+//   - 「一時的に制限」などの、待っても解決しない状態
+//   - 画面から「中止」が押されたとき
+//   - ログイン用のウィンドウが閉じられたとき
+export async function waitForLoginOutcome(page, timeout) {
   const SUCCESS =
     '[data-testid="primaryColumn"] [data-testid="tweet"], [data-testid="SideNav_AccountSwitcher_Button"]';
   const deadline = Date.now() + timeout;
   while (Date.now() < deadline) {
+    if (isCancelled()) throw new Error('ログインを中止しました。');
+    if (page.isClosed()) throw new Error('ログイン用のウィンドウが閉じられました。');
+
     // 成功要素が出れば完了
     try {
       await page.waitForSelector(SUCCESS, { timeout: 3000 });
@@ -41,10 +47,15 @@ async function waitForLoginOutcome(page, timeout) {
     } catch {
       // まだ出ていない。制限文言が出ていないか確認する
     }
+    if (page.isClosed()) throw new Error('ログイン用のウィンドウが閉じられました。');
     const text = await page
       .evaluate(() => (document.body?.innerText || '').slice(0, 3000))
-      .catch(() => '');
-    if (classifyLoginPage(text) === 'ratelimit') {
+      .catch(() => null);
+    // ページを読めない = ウィンドウが閉じられた/壊れた
+    if (text === null && page.isClosed()) {
+      throw new Error('ログイン用のウィンドウが閉じられました。');
+    }
+    if (classifyLoginPage(text ?? '') === 'ratelimit') {
       throw new RateLimitedError(
         'Xがログインを一時的に制限しています。30分〜1時間ほど空けてから、1回だけログインし直してください(短時間に何度も試すと制限が延びます)。'
       );
@@ -150,7 +161,7 @@ export async function login({ account = null, authStatePath = null, headless = f
     try {
       success = await tryAutoLogin(page, account);
     } catch (err) {
-      await browser.close();
+      await browser.close().catch(() => {});
       throw err; // ログイン制限など、待っても解決しないエラー
     }
   }
@@ -162,10 +173,10 @@ export async function login({ account = null, authStatePath = null, headless = f
       await waitForLoginOutcome(page, LOGIN_TIMEOUT_MS);
       success = true;
     } catch (err) {
-      await browser.close();
-      // 制限エラーはそのまま(理由が伝わる)、それ以外はタイムアウト扱い
-      if (err instanceof RateLimitedError) throw err;
-      throw new Error('ログインがタイムアウトしました。もう一度お試しください。');
+      // ウィンドウが既に閉じられている場合もあるので、失敗しても気にしない
+      await browser.close().catch(() => {});
+      // 中止・制限・ウィンドウを閉じた、はそのまま理由を伝える
+      throw err;
     }
   }
 

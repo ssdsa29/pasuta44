@@ -73,6 +73,33 @@ check('通常のログイン画面は問題なし', classifyLoginPage('電話番
 check('空文字でも落ちない', classifyLoginPage('') === null);
 check('null でも落ちない', classifyLoginPage(null) === null);
 
+// ログイン待ちは、中止・ウィンドウを閉じた・制限 のどれでも待ち続けずに抜ける
+const { waitForLoginOutcome } = await import('../src/login.js');
+const { requestCancel, resetCancel } = await import('../src/cancel.js');
+const fakePage = (opts = {}) => ({
+  isClosed: () => opts.closed ?? false,
+  waitForSelector: async () => { throw new Error('not found'); },
+  evaluate: async () => opts.text ?? '',
+});
+
+let loginErr = null;
+try { await waitForLoginOutcome(fakePage({ closed: true }), 60000); } catch (e) { loginErr = e; }
+check('ウィンドウを閉じたら待ち続けない', /閉じられました/.test(String(loginErr?.message)));
+
+loginErr = null;
+requestCancel();
+try { await waitForLoginOutcome(fakePage(), 60000); } catch (e) { loginErr = e; }
+resetCancel();
+check('中止したら待ち続けない', /中止/.test(String(loginErr?.message)));
+
+loginErr = null;
+try { await waitForLoginOutcome(fakePage({ text: 'ログインを一時的に制限しました' }), 60000); } catch (e) { loginErr = e; }
+check('制限を見つけたら待ち続けない', loginErr?.name === 'RateLimitedError');
+
+loginErr = null;
+try { await waitForLoginOutcome(fakePage(), 100); } catch (e) { loginErr = e; }
+check('時間切れならタイムアウトとして返す', /タイムアウト/.test(String(loginErr?.message)));
+
 // ---- 3. 自動再試行の動作 ---------------------------------------------------
 console.log('\n[3] 自動再試行');
 let calls = 0;
