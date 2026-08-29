@@ -1,8 +1,16 @@
 # ワークフローの用意
 
 `scripts/generate.py` は、ここに置いた **ComfyUIのAPI式JSON** を読み込んで生成します。
-ノード構成は環境（使うカスタムノードやLoRA）によって違うので、自分のComfyUIから
-書き出したものを置いてください。
+
+**`krea2-t2i-api.json` は検証済みのものを同梱済み**（2026-08-29、ComfyUI v0.34.0で動作確認）。
+ComfyUI公式のKrea 2 Turboテンプレート（Comfy-Org/workflow_templates の
+`image_krea2_turbo_t2i.json`）からコア生成パスのみを抜き出したもの:
+UNETLoader → CLIPTextEncode(positive) → KSampler(steps=8, cfg=1, euler, simple)
+→ VAEDecode → SaveImage。負側条件はConditioningZeroOut（Negative Prompt不使用）。
+LoRAやLLMによるPrompt拡張ノードは含まない（拡張はClaude側で行うため）。
+
+ノード構成を変えたい場合（LoRA追加等）は、以下の手順で自分のComfyUIから
+書き出したものに差し替えてください。
 
 ## 手順
 

@@ -1,7 +1,7 @@
 # 引継ぎ: Krea 2 エージェント駆動画像生成のローカル検証
 
 作成日: 2026-08-29 / 作成: Claude Code（リモートセッション）
-ローカルでこのリポジトリを開いたClaude Code（または人間）向けの引継ぎ文書。
+**2026-08-29 ローカル検証完了**（Claude Code ローカルセッションにて全成功基準クリア）
 
 ## 目的
 
@@ -11,64 +11,53 @@ ComfyUI API経由の画像生成・結果確認までを一気通貫で行える
 
 記事: https://www.techno-edge.net/article/2026/08/27/5429.html
 
-## 現在の状態（済んでいること）
+## 検証結果（2026-08-29、すべて成功）
 
-ブランチ `claude/image-generation-implementation-fbrlsv`（コミット 725fdf7）に一式push済み。
+| # | 成功基準 | 結果 |
+|---|---|---|
+| 1 | 疎通テスト（赤いリンゴ）で画像が `outputs/` に保存される | ✅ `krea2_00001_.png` Promptどおり |
+| 2 | 日本語キーワード→Prompt生成→保存→生成→確認が自動で回る | ✅ 「夏、日本人美女、花火」→ `krea2_00002_.png` |
+| 3 | 生成画像がPromptの意図と一致 | ✅ 浴衣・団扇・花火・提灯・縦構図すべて一致 |
+| 4 | 差分指示（「衣装を赤に」）で派生が正しく動く | ✅ 衣装のみ変化、他要素保持（`krea2_00003_.png`） |
 
-- `docs/krea2-prompting-guide.md` — Krea 2公式Promptガイドの要約md。
-  公式リポジトリ https://github.com/krea-ai/krea-2 の docs/prompting.md と READMEから
-  2026-08-29 に取得・整理したもの。Prompt作成時は必ずこれを参照する運用（CLAUDE.mdに記載済み）
-- `docs/krea2-system-prompt.txt` — 公式expansion.txtの原文。LM StudioやComfyUIの
-  LLMノードに貼る用（記事の「その1」方式）。エージェント運用では通常使わない
-- `.claude/skills/krea2-prompt/SKILL.md` — 日本語キーワード→英語Prompt生成Skill
-- `.claude/skills/krea2-generate/SKILL.md` — ComfyUI APIで生成→Vision確認→リトライのSkill
-- `scripts/generate.py` — ComfyUI API呼び出し（Python標準ライブラリのみ、依存なし）。
-  構文チェックとpatch_workflow（Prompt/width/height/seed差し替えロジック）の単体テストは実施済み。
-  **実際のComfyUIサーバーに対する疎通・生成テストは未実施**（リモート環境からは届かないため）
-- `prompts/`（Prompt保存先）、`outputs/`（画像出力先、gitignore済み）
+生成速度: 1024x1536 / 8 steps で**約16秒/枚**（RTX 5070 Ti 16GB、初回ロード込みでも約20秒）。
 
-## 残作業（ローカルでやること）
+## ローカル環境の構成（このマシンに導入済み）
 
-1. **ComfyUI + Krea 2 Turbo の準備**
-   - モデル: Hugging Face `krea/Krea-2-Turbo`（推奨設定 steps=8 / cfg=0.0 / mu=1.15、1k〜2k解像度）
-   - ComfyUIでKrea 2のt2iワークフローを組み、普通に1枚生成できることを確認
-2. **ワークフローJSONの配置**（詳細手順は `workflows/README.md`）
-   - ComfyUIの設定でDevモードを有効化 → 「Export (API)」でJSON書き出し
-   - `workflows/krea2-t2i-api.json` として保存
-   - ポジティブ側のTextEncodeノードのタイトルをComfyUI上で「positive」にしておくと確実
-   - SaveImageノードが必要（Previewのみだと画像を取得できない）
-3. **接続先の設定**
-   - ComfyUIが同一マシンならデフォルト（`http://127.0.0.1:8188`）でOK
-   - 別マシンなら `export COMFYUI_SERVER=http://<IP>:8188`
-4. **疎通テスト**
-   ```bash
-   python3 scripts/generate.py --prompt "a red apple on a wooden table, soft window light" --width 1024 --height 1024
-   ```
-   `outputs/` にPNGが保存されれば成功
-5. **本番の使い方**: Claude Codeに日本語で指示するだけ
-   - 「夏、日本人美女、花火 これで1枚生成して」→ krea2-prompt → krea2-generate が発動
-   - 「衣装を赤に」「背景を夜景に」などの差分指示にも対応
-   - グラビア縦構図のデフォルトは 1024x1536。記事同様の掲載用なら長辺1920px指定
+- **ComfyUI**: portable v0.34.0 を `C:\claud\ComfyUI_windows_portable\` に展開
+  （PyTorch 2.13.0+cu130、RTX 5070 Ti対応）。
+  起動は `run_nvidia_gpu.bat`、またはClaude Codeからは `.claude/launch.json` の
+  `comfyui` 設定（preview_start）で起動できる
+- **モデル**（`ComfyUI\models\` 配下に配置済み、Comfy-Org/Krea-2 より取得）:
+  - `diffusion_models/krea2_turbo_fp8_scaled.safetensors`（12.2GB）
+  - `text_encoders/qwen3vl_4b_fp8_scaled.safetensors`（4.9GB）
+  - `vae/qwen_image_vae.safetensors`（0.2GB）
+- **Python**: 3.12.10（winget導入、`%LOCALAPPDATA%\Programs\Python\Python312`）。
+  Windowsでは `python3` がStoreスタブに化けるため **`python`** を使うこと（Skillも修正済み）
+- **ワークフロー**: `workflows/krea2-t2i-api.json` を同梱済み。UIからのExport (API)は不要
+  （ComfyUI公式テンプレートのコア生成パスを抜き出して作成、動作検証済み。
+  詳細は `workflows/README.md`）
+
+## 本番の使い方
+
+ComfyUIを起動した状態で、Claude Codeに日本語で指示するだけ:
+- 「夏、日本人美女、花火 これで1枚生成して」→ krea2-prompt → krea2-generate が発動
+- 「衣装を赤に」「背景を夜景に」などの差分指示にも対応
+- グラビア縦構図のデフォルトは 1024x1536。記事同様の掲載用なら長辺1920px指定
+- 接続先変更は環境変数 `COMFYUI_SERVER`（デフォルト `http://127.0.0.1:8188`）
 
 ## 既知の注意点・ハマりどころ
 
 - `generate.py` はUI用フォーマットのJSONを渡すとエラーメッセージを出して止まる仕様。
-  必ず「Export (API)」のJSONを使うこと
-- width/height差し替えは「widthとheight両方の入力を持つ最初に見つかったノード」全部に適用される。
-  Krea 2用カスタムノードが独自の解像度指定を持つ場合は `patch_workflow()` の調整が必要かもしれない
-  （ここが未検証部分の本丸。動かなければノード構成のJSONを見て合わせる）
+  API式JSON（同梱の `krea2-t2i-api.json` 形式）を使うこと
+- KSamplerの設定は公式テンプレート準拠で **steps=8 / cfg=1 / euler / simple**。
+  負側条件はConditioningZeroOutで、Negative Promptは使わない
+  （記事のcfg=0.0とは表記が違うが、cfg=1+ZeroOutが公式テンプレートの構成）
+- 潜在画像は公式テンプレートどおり `EmptyLatentImage` 直結でOK（16ch用の特殊ノード不要）
+- width/height差し替えは「widthとheight両方の入力を持つノード」全部に適用される
+  （同梱ワークフローではEmptyLatentImageのみが該当し、問題なし）
 - seedは `seed` / `noise_seed` を持つ全ノードで毎回ランダム化される。固定したい場合は要改修
 - history APIのポーリングは2秒間隔・タイムアウトなし。生成が長い場合はそのまま待つ
-- Krea 2はNegative Prompt不要（Turboはcfg=0）。ガイド要約md参照
 - LoRAを使う場合: 公式推奨は「RAWで学習してTurboに適用」。ワークフローに
-  LoRAローダーを入れてExportし直せば、generate.py側の変更は不要のはず
-
-## 検証で確認してほしいこと（成功基準）
-
-1. 疎通テストのPromptで画像が `outputs/` に保存される
-2. 日本語キーワード指示だけで、Prompt生成→保存（prompts/）→生成→画像確認まで自動で回る
-3. 生成画像がPromptの意図（主題・衣装・背景・構図）と一致している
-4. 差分指示（「衣装を赤に」等）で前回Promptからの派生が正しく動く
-
-問題があれば `scripts/generate.py` と `workflows/README.md` を直し、このファイルの
-「既知の注意点」を更新してcommitすること。
+  `LoraLoaderModelOnly` をUNETLoaderとKSamplerの間に挟めばよい（generate.py側の変更不要）。
+  公式スタイルLoRA（darkbrush等）は Comfy-Org/Krea-2 の `loras/` にある

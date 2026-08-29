@@ -15,8 +15,10 @@ description: Krea 2でComfyUI API経由の画像生成を実行する。「生�
 1. Promptがまだ無ければ、先に krea2-prompt スキルの手順で作る。
 2. 生成を実行する:
    ```
-   python3 scripts/generate.py --prompt "<英語Prompt>" --width 1024 --height 1536
+   python scripts/generate.py --prompt "<英語Prompt>" --width 1024 --height 1536
    ```
+   （Windowsでは `python3` はStoreスタブに化けることがあるため `python` を使う。
+   通らなければフルパス `%LOCALAPPDATA%\Programs\Python\Python312\python.exe`）
    デフォルトはグラビア縦構図の 1024x1536。ユーザー指定があればそれに従う
    （長辺1920pxなど。16の倍数に丸める。上限2048）。
 3. 出力は `outputs/` に保存される。生成した画像ファイルをReadで開いて内容を確認し、

@@ -1,0 +1,15 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "comfyui",
+      "runtimeExecutable": "C:\\claud\\ComfyUI_windows_portable\\python_embeded\\python.exe",
+      "runtimeArgs": [
+        "-s",
+        "C:\\claud\\ComfyUI_windows_portable\\ComfyUI\\main.py",
+        "--windows-standalone-build"
+      ],
+      "port": 8188
+    }
+  ]
+}

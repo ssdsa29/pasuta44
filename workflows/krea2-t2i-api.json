@@ -1,0 +1,61 @@
+{
+  "3": {
+    "class_type": "KSampler",
+    "_meta": {"title": "KSampler"},
+    "inputs": {
+      "model": ["10", 0],
+      "positive": ["6", 0],
+      "negative": ["13", 0],
+      "latent_image": ["5", 0],
+      "seed": 0,
+      "steps": 8,
+      "cfg": 1,
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "denoise": 1
+    }
+  },
+  "5": {
+    "class_type": "EmptyLatentImage",
+    "_meta": {"title": "EmptyLatentImage"},
+    "inputs": {"width": 1024, "height": 1536, "batch_size": 1}
+  },
+  "6": {
+    "class_type": "CLIPTextEncode",
+    "_meta": {"title": "positive"},
+    "inputs": {
+      "text": "a red apple on a wooden table, soft window light",
+      "clip": ["11", 0]
+    }
+  },
+  "8": {
+    "class_type": "VAEDecode",
+    "_meta": {"title": "VAEDecode"},
+    "inputs": {"samples": ["3", 0], "vae": ["12", 0]}
+  },
+  "10": {
+    "class_type": "UNETLoader",
+    "_meta": {"title": "UNETLoader"},
+    "inputs": {"unet_name": "krea2_turbo_fp8_scaled.safetensors", "weight_dtype": "default"}
+  },
+  "11": {
+    "class_type": "CLIPLoader",
+    "_meta": {"title": "CLIPLoader"},
+    "inputs": {"clip_name": "qwen3vl_4b_fp8_scaled.safetensors", "type": "krea2", "device": "default"}
+  },
+  "12": {
+    "class_type": "VAELoader",
+    "_meta": {"title": "VAELoader"},
+    "inputs": {"vae_name": "qwen_image_vae.safetensors"}
+  },
+  "13": {
+    "class_type": "ConditioningZeroOut",
+    "_meta": {"title": "ConditioningZeroOut (negative)"},
+    "inputs": {"conditioning": ["6", 0]}
+  },
+  "29": {
+    "class_type": "SaveImage",
+    "_meta": {"title": "SaveImage"},
+    "inputs": {"images": ["8", 0], "filename_prefix": "krea2"}
+  }
+}
