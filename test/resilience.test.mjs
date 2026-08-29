@@ -375,7 +375,7 @@ check('同じ動画を重複登録しない', (() => {
 const { buildViewData } = await import('../src/report.js');
 const view = buildViewData(
   { recommend: [{ handle: 'alice', displayName: 'アリス', dirName: 'alice', tab: 'recommend', tweets: [
-    { tweetId: '1', url: 'u1', datetime: '2026-08-29T10:00:00Z', text: 'あ',
+    { tweetId: '1', url: 'u1', datetime: '2026-08-29T10:00:00Z', text: 'あ', screenshot: 'screenshots/1.png',
       savedImages: ['a.jpg'], savedVideos: [{ file: 'v.mp4', type: 'video', durationMs: 5000 }], replies: [{}] },
     { tweetId: '2', url: 'u2', datetime: '2026-08-29T09:00:00Z', text: 'い',
       savedImages: [], savedVideos: [{ file: null, url: 'x.m3u8' }] },
@@ -387,6 +387,8 @@ const view = buildViewData(
 check('投稿とコメントが同じ並びに入る', view.items.length === 3);
 check('コメントに印がつく', view.items.filter((i) => i.kind === 'comment').length === 1);
 check('画像の場所が正しく組み立てられる', view.items[0].images[0] === 'recommend/alice/images/a.jpg');
+check('スクショの場所が正しく組み立てられる', view.items[0].screenshot === 'recommend/alice/screenshots/1.png');
+check('スクショが無い投稿は null', view.items[1].screenshot === null);
 check('動画の場所が正しく組み立てられる', view.items[0].videos[0].src === 'recommend/alice/videos/v.mp4');
 check('保存できなかった動画は数だけ記録', view.items[1].missingVideos === 1 && view.items[1].videos.length === 0);
 check('コメントは元の投稿とひも付く', view.items[2].onAccount === 'alice' && view.items[2].parentUrl === 'u1');

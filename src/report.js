@@ -35,6 +35,7 @@ export function buildViewData(dataByTab, comments = []) {
           displayName: account.displayName ?? '',
           datetime: t.datetime ?? null,
           text: t.text ?? '',
+          screenshot: t.screenshot ? `${base}/${t.screenshot}` : null,
           url: t.url,
           images: (t.savedImages ?? []).map((f) => `${base}/images/${f}`),
           videos: (t.savedVideos ?? [])
@@ -84,13 +85,13 @@ export function generateReport(runDir, dataByTab, comments = []) {
   writeFileSync(htmlPath, renderHtml(view), 'utf8');
 
   // 投稿のCSV
-  const rows = [['種別', 'タブ', 'アカウント', '表示名', 'ID', 'URL', '投稿日時', '本文', '画像数', '動画数', 'コメント数']
+  const rows = [['種別', 'タブ', 'アカウント', '表示名', 'ID', 'URL', '投稿日時', '本文', 'スクショ', '画像数', '動画数', 'コメント数']
     .map(csvCell).join(',')];
   for (const it of view.items) {
     rows.push([
       it.kind === 'post' ? '投稿' : 'コメント',
       TAB_LABELS[it.tab] ?? it.tab,
-      it.handle, it.displayName, it.id, it.url, it.datetime, it.text,
+      it.handle, it.displayName, it.id, it.url, it.datetime, it.text, it.screenshot ?? '',
       it.images.length, it.videos.length, it.replyCount,
     ].map(csvCell).join(','));
   }
@@ -144,6 +145,7 @@ function renderHtml(view) {
   .chip{font-size:11px;border:1px solid var(--line);border-radius:99px;padding:1px 8px;color:var(--muted)}
   .chip.comment{border-color:var(--brand);color:var(--brand)}
   .text{white-space:pre-wrap;margin:8px 0 0;font-size:15px}
+  .shot{display:block;width:100%;margin-top:10px;border:1px solid var(--line);border-radius:10px;cursor:zoom-in}
   .media{display:grid;gap:6px;margin-top:10px;grid-template-columns:repeat(auto-fit,minmax(180px,1fr))}
   .media img,.media video{width:100%;border-radius:10px;background:#0002;display:block;max-height:420px;object-fit:cover}
   .media.one{grid-template-columns:1fr}
@@ -190,7 +192,7 @@ function renderHtml(view) {
       <option value="old">古い順</option>
       <option value="account">アカウントごと</option>
     </select>
-    <input type="search" id="q" placeholder="本文を検索">
+    <input type="search" id="q" placeholder="本文・アカウントを検索">
     <span class="count" id="count"></span>
   </div>
 </header>
@@ -234,7 +236,10 @@ function filtered() {
     if (acc && !(it.handle === acc || (withReplies && it.onAccount === acc))) return false;
     if (kind && it.kind !== kind) return false;
     if (tab && it.tab !== tab) return false;
-    if (q && !String(it.text).toLowerCase().includes(q)) return false;
+    if (q) {
+      const hay = (String(it.text) + ' ' + it.handle + ' ' + it.displayName).toLowerCase();
+      if (!hay.includes(q)) return false;
+    }
     if (mode === 'images' && it.images.length === 0) return false;
     if (mode === 'videos' && it.videos.length === 0) return false;
     return true;
@@ -271,12 +276,17 @@ function postHtml(it) {
   if (it.images.length) meta.push('画像 ' + it.images.length + '枚');
   if (it.videos.length) meta.push('動画 ' + it.videos.length + '本');
   if (it.missingVideos) meta.push('保存できなかった動画 ' + it.missingVideos + '本');
+  // スクショがあれば本文の代わりにそれを見せる(画像はスクショに写っているので重複表示しない)
+  const shot = it.screenshot
+    ? '<img class="shot" src="' + esc(it.screenshot) + '" loading="lazy" alt="投稿のスクリーンショット">'
+    : '';
   return '<article class="post">'
     + '<div class="who"><b>' + esc(it.displayName || it.handle) + '</b>'
     + '<span class="handle">@' + esc(it.handle) + '</span>' + chips.join('')
     + '<span class="time">' + esc(fmtTime(it.datetime)) + '</span></div>'
     + (it.text ? '<p class="text">' + esc(it.text) + '</p>' : '')
-    + mediaHtml(it)
+    + shot
+    + (it.screenshot ? '' : mediaHtml(it))
     // 各項目を span で包む(そうしないと横の間隔が空かない)
     + (meta.length ? '<div class="meta">' + meta.map((m) => '<span>' + m + '</span>').join('') + '</div>' : '')
     + '</article>';
@@ -336,6 +346,14 @@ function emptyHtml() {
 
 // ギャラリーのクリックで拡大表示
 $('#main').addEventListener('click', (e) => {
+  // タイムラインのスクショをクリックしたら拡大
+  const shot = e.target.closest('.shot');
+  if (shot) {
+    $('#viewerBody').innerHTML = '<img src="' + esc(shot.getAttribute('src')) + '" alt="">';
+    $('#viewerBar').innerHTML = '<a href="' + esc(shot.getAttribute('src')) + '" target="_blank">元ファイル</a>';
+    $('#viewer').showModal();
+    return;
+  }
   const cell = e.target.closest('.cell');
   if (!cell) return;
   const src = cell.dataset.src, type = cell.dataset.type;

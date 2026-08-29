@@ -98,8 +98,30 @@ async function switchToTab(page, tabKey) {
   }, { retries: 3 });
 }
 
+// 一覧上の投稿カードを、その場でスクリーンショットに撮る。
+// 詳細ページは開かず、いま画面にある要素をそのまま画像化するだけ(アクセスは増えない)。
+// 成功したら保存先ファイル名(アカウントフォルダからの相対パス)を返す。失敗したら null。
+async function screenshotTweetCard(page, tweetId, handle, tabDir) {
+  try {
+    const loc = page
+      .locator(`article[data-testid="tweet"]:has(a[href*="/status/${tweetId}"])`)
+      .first();
+    if ((await loc.count().catch(() => 0)) === 0) return null;
+    const relDir = 'screenshots';
+    const dir = join(tabDir, sanitize(handle), relDir);
+    mkdirSync(dir, { recursive: true });
+    const filename = `${tweetId}.png`;
+    await loc.scrollIntoViewIfNeeded({ timeout: 3000 });
+    await humanPause(200, 500);
+    await loc.screenshot({ path: join(dir, filename), timeout: 8000 });
+    return `${relDir}/${filename}`;
+  } catch {
+    return null; // 撮れなくても収集は続ける
+  }
+}
+
 // タイムラインをスクロールしながら、ユニークアカウント数が目標に達するまで投稿を集める
-async function collectFromTimeline(page, seenIds) {
+async function collectFromTimeline(page, seenIds, { tabDir = null } = {}) {
   const byAccount = new Map(); // handle -> { displayName, tweets: Map<tweetId, tweet> }
   const seenInRun = new Set();
 
@@ -130,6 +152,10 @@ async function collectFromTimeline(page, seenIds) {
         byAccount.set(tweet.handle, account);
       }
       if (account.tweets.size < CONFIG.maxTweetsPerAccount) {
+        // 残すと決めた投稿は、いま画面にあるうちにその場でスクショを撮る
+        if (CONFIG.saveScreenshots && tabDir) {
+          tweet.screenshot = await screenshotTweetCard(page, tweet.tweetId, tweet.handle, tabDir);
+        }
         account.tweets.set(tweet.tweetId, tweet);
       }
     }
@@ -276,10 +302,10 @@ async function scrapeTab(page, tabKey, runDir, seenIds, failures, media, comment
   const tabLabel = await switchToTab(page, tabKey);
   console.log(`タブ「${tabLabel}」に切り替えました。スクロールしながら収集します...`);
 
-  const byAccount = await collectFromTimeline(page, seenIds);
+  const tabDir = join(runDir, tabKey);
+  const byAccount = await collectFromTimeline(page, seenIds, { tabDir });
   console.log(`${byAccount.size} アカウント分の投稿を検出しました。`);
 
-  const tabDir = join(runDir, tabKey);
   const summary = [];
   const tabData = [];
 
@@ -317,11 +343,16 @@ async function scrapeTab(page, tabKey, runDir, seenIds, failures, media, comment
           tweetId: tweet.tweetId,
           url: tweet.url,
           datetime: tweet.datetime,
-          text: tweet.text,
+          // 本文はスクリーンショットに残す。テキストは保存しない(後でローカルLLMが画像から読み取る想定)。
+          screenshot: tweet.screenshot ?? null,
           imageUrls,
           savedImages,
           savedVideos: [],
         };
+
+        if (CONFIG.saveScreenshots && !record.screenshot) {
+          failures.push({ type: 'screenshot', tweetUrl: tweet.url });
+        }
 
         if (CONFIG.fetchReplies) {
           // 詳細ページを次々に開くのは自動化とみなされやすいので、開く前に少し間を置く

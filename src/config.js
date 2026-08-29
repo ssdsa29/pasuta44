@@ -8,18 +8,24 @@ export const CONFIG = {
   // 1アカウントあたり保存する最大投稿数
   maxTweetsPerAccount: 5,
 
-  // 各投稿のリプライ(コメント)も取得するか
-  fetchReplies: true,
+  // 投稿を1枚ずつ画面のまま画像化(スクリーンショット)して残すか。
+  // 本文をテキスト抽出する代わりに、見た目そのままを保存する用途。
+  // 詳細ページを開かず一覧上でその場撮影するので、アクセスは増えない。
+  saveScreenshots: true,
+
+  // 各投稿のリプライ(コメント)も取得するか。
+  // ※コメント取得は投稿の詳細ページを次々に開くため、最もBANされやすい動き。既定はオフ。
+  fetchReplies: false,
 
   // 1投稿あたり取得する最大リプライ数
   maxRepliesPerTweet: 10,
 
-  // 動画も保存するか
-  saveVideos: true,
+  // 動画も保存するか(既定はオフ。動画はスクショに写らないため必要なときだけ)
+  saveVideos: false,
   // 1本あたりの動画サイズの上限(MB)。これを超える動画は記録だけ残して保存しない
   maxVideoMB: 100,
-  // コメント(リプライ)を単体でも保存するか
-  saveComments: true,
+  // コメント(リプライ)を単体でも保存するか(既定はオフ)
+  saveComments: false,
 
   // 「おすすめ欄のアカウントを収集」で集めるアカウント数
   maxRecommendAccounts: 50,

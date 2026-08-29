@@ -65,6 +65,7 @@ export const OPTION_SCHEMA = [
   // --- 収集 ---
   { key: 'maxAccounts', group: '収集', label: '収集するアカウント数(タブごと)', type: 'number', min: 1, max: 200 },
   { key: 'maxTweetsPerAccount', group: '収集', label: '1アカウントあたりの投稿数', type: 'number', min: 1, max: 100 },
+  { key: 'saveScreenshots', group: '収集', label: '投稿をスクリーンショットで保存する', type: 'boolean' },
   { key: 'fetchReplies', group: '収集', label: 'リプライ(コメント)も取得する', type: 'boolean' },
   { key: 'maxRepliesPerTweet', group: '収集', label: '1投稿あたりのリプライ取得数', type: 'number', min: 1, max: 100 },
   { key: 'saveVideos', group: '収集', label: '動画も保存する', type: 'boolean' },
