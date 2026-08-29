@@ -1,4 +1,4 @@
-# 『青梅署、事件です(たぶん)』60カット版
+# 『青梅西署、事件です(たぶん)』60カット版
 
 3分尺 / 60カット / 基本3秒(73フレーム)
 
@@ -9,7 +9,7 @@
 - `[HARU]` はキャラLoRAのトリガーワードに置き換える
 - 全カットのIMGに脱AI語を付与する(`docs/production-spec.md` 参照)
 - **尺**: 無印=3秒(73f) / `[2s]`=2秒(49f) / `[5s]`=5秒(121f、感情のピークのみ)
-- **(NP)** = 人物が写らないカット。LoRA完成前に着手できる
+- **(NP)** = 人物が写らないカット(29本)。LoRA完成前に着手できる
 
 ---
 
@@ -25,11 +25,11 @@
 
 ### C03 (NP) ハルの部屋・壁
 - N: 「刑事になりたかった。ずっと」
-- IMG: `A bedroom wall completely covered with crime-drama posters and yellowed newspaper clippings pinned in overlapping layers, thin dawn light from a curtain gap, handheld documentary photography, warm muted palette, film grain.`
+- IMG: `A Japanese bedroom wall completely covered with crime-drama posters and yellowed newspaper clippings pinned in overlapping layers, the printed text too small and out of focus to read, thin dawn light from a curtain gap, handheld documentary photography, warm muted palette, film grain.`
 - MOV: `The camera is static. Dust motes float slowly through the light beam.`
 
 ### C04 (NP) [2s] 目覚まし時計
-- IMG: `Extreme close-up of an old digital alarm clock on a cheap wooden desk showing an early morning time, dim blue dawn light, shallow depth of field, film grain.`
+- IMG: `Extreme close-up of an old analog alarm clock on a cheap wooden desk, the hands pointing to just before six, dim blue dawn light, very shallow depth of field with the dial face partly out of focus, film grain.`
 - MOV: `The camera is static. The colon between the digits blinks steadily.`
 
 ### C05 鏡の前・引き ★基準カット
@@ -46,7 +46,7 @@
 - MOV: `The camera is static. Cherry petals drift down slowly, a car passes in the far background.`
 
 ### C08 (NP) [2s] 署の看板
-- IMG: `Close-up of a weathered Japanese police station sign plate mounted on a concrete wall, slightly faded paint, overcast daylight, shallow depth of field, film grain.`
+- IMG: `A weathered vertical sign plate mounted on a concrete gatepost outside a small Japanese police station, the sign reading "青梅西署" in four large black characters on white, slightly faded paint, overcast daylight, shallow depth of field, film grain.`
 - MOV: `The camera is static. The shadow of a branch moves slightly across the sign.`
 
 ### C09 廊下を歩く
@@ -247,7 +247,7 @@
 ## 第4幕 日常へ (2:35-3:00) 8カット
 
 ### C53 (NP) 夜明け
-- IMG: `Dawn breaking over a quiet suburban street, a police car with its emergency lights just switched off, pale morning sky, empty road, exhausted calm atmosphere, cinematic wide shot, muted cool-to-warm gradient, film grain.`
+- IMG: `Dawn breaking over a quiet Japanese residential street with low tiled-roof houses and utility poles, a white and black Japanese police car with its emergency lights just switched off, pale morning sky, empty narrow road, exhausted calm atmosphere, cinematic wide shot, muted cool-to-warm gradient, film grain.`
 - MOV: `The camera is static. The sky slowly brightens, a single bird crosses overhead.`
 
 ### C54 先輩が肩を叩く
@@ -260,12 +260,12 @@
 - MOV: `The camera is completely static. She stands still, breathing. Her tired expression holds, then a small smile begins at one corner of her mouth and spreads unevenly across her face. Her eyes crinkle. She blinks once, slowly.`
 
 ### C56 (NP) [2s] 朝の署内
-- IMG: `An empty police office in early morning light, sunlight through horizontal blinds casting stripes across desks, dust in the air, quiet documentary photography, warm morning tones, film grain.`
+- IMG: `An empty Japanese police station office in early morning light, grey steel desks pushed together facing each other, stacked document trays and a wall of files, sunlight through horizontal blinds casting stripes across the desks, dust in the air, quiet documentary photography, warm morning tones, film grain.`
 - MOV: `The camera is static. Dust drifts through the light stripes.`
 
 ### C57 (NP) また書類の山
 - S: 先輩(声のみ)「じゃ、報告書な。事件の分も追加で」
-- IMG: `An even taller stack of documents dropped onto a desk in a morning police office, sunlight through blinds, the stack almost comically high, documentary photography, warm morning light, film grain.`
+- IMG: `An even taller stack of documents dropped onto a grey steel desk in a Japanese police station office in the morning, sunlight through blinds, the stack almost comically high, documentary photography, warm morning light, film grain.`
 - MOV: `The camera is static. The stack lands heavily, a few sheets sliding off the top.`
 
 ### C58 固まるハル・再び
@@ -276,9 +276,9 @@
 - IMG: `[HARU] laughing quietly at her desk while reaching for her stamp, a resigned but warm smile, a huge stack of documents beside her, morning sunlight through blinds, candid photography, film grain.`
 - MOV: `The camera is static. She laughs quietly, shakes her head slightly, and picks up the stamp.`
 
-### C60 (NP) [5s] ラスト・引き
+### C60 [5s] ラスト・引き
 - N: 「事件は、たぶん、ここからも始まる」
-- IMG: `A wide shot of a quiet suburban police office in morning light, one young officer alone at a desk stamping documents, empty desks around her, sunlight through blinds, mountains faintly visible through the window, documentary photography, warm muted palette, film grain.`
+- IMG: `A wide shot of a quiet Japanese police station office in morning light, [HARU] alone at a grey steel desk stamping documents, empty desks around her, sunlight through blinds, mountains faintly visible through the window, documentary photography, warm muted palette, film grain.`
 - MOV: `The camera is completely static. She stamps documents steadily. Dust drifts in the sunlight. Nothing else moves.`
 
 ---
@@ -294,11 +294,11 @@
 
 タイトルとエンドカードで8秒を足して**約3分**。
 
-## 人物が写らないカット = 27本(45%)
+## 人物が写らないカット = 29本(48%)
 
 ```
 C01 C02 C03 C04 C07 C08 C11 C13 C14 C15 C19 C24 C25 C28
-C30 C32 C35 C38 C39 C41 C42 C44 C45 C48 C49 C51 C53 C56 C57 C60
+C30 C32 C35 C38 C39 C41 C42 C44 C45 C48 C49 C51 C53 C56 C57
 ```
 
 **LoRAの完成を待たずに着手できる。** 先にここを全部作れば、
@@ -317,7 +317,7 @@ LoRA学習(4〜8時間)の待ち時間が無駄にならない。
 
 ## 制作順序
 
-1. **人物なし27カット**を先に量産(LoRA不要、いますぐ着手可)
+1. **人物なし29カット**を先に量産(LoRA不要、いますぐ着手可)
 2. C05(鏡)でキャラの見え方を確定
 3. LoRA学習と並行して、人物なしカットの動画化を回す
 4. LoRA完成後、人物ありの33カットのキーフレームを生成
