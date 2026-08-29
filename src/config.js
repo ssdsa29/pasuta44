@@ -70,8 +70,10 @@ export const CONFIG = {
   // 出力先ディレクトリ
   outputDir: 'output',
 
-  // ブラウザを表示するか(デバッグ時は false 推奨)
-  headless: true,
+  // ブラウザを隠して実行するか。
+  // 隠して実行(true)すると、ブラウザが自分を「HeadlessChrome」と名乗るため、
+  // X側から自動操作とみなされやすくなる。既定は表示(false)。
+  headless: false,
 
   // タブ名の対応(日本語UI / 英語UI 両対応)
   tabs: {

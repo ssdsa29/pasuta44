@@ -87,7 +87,7 @@ export const OPTION_SCHEMA = [
   // --- 表示・動作 ---
   { key: 'maxParallelViews', group: '表示・動作', label: '同時表示するウィンドウ数', type: 'number', min: 1, max: 12, warnOver: 6 },
   { key: 'viewColumns', group: '表示・動作', label: 'タイル配置の列数', type: 'columns' },
-  { key: 'headless', group: '表示・動作', label: 'ブラウザを隠して実行する', type: 'boolean' },
+  { key: 'headless', group: '表示・動作', label: 'ブラウザを隠して実行する', type: 'boolean', warnWhenTrue: true },
   { key: 'speedFactor', group: '表示・動作', label: '動作の速さ(1.0=標準/大きいほど慎重)', type: 'decimal', min: 0.2, max: 5 },
 ];
 
@@ -149,6 +149,9 @@ export function warnFor(opt, value, all) {
   }
   if (opt.warnUnder && opt.unit === 'sec' && value / 1000 < opt.warnUnder) {
     return `⚠️ ${opt.warnUnder} 秒未満の間隔はアカウント制限のリスクが高まります。`;
+  }
+  if (opt.warnWhenTrue && value === true) {
+    return '⚠️ 隠して実行すると、ブラウザが自分を「HeadlessChrome」と名乗るため、自動操作とみなされやすくなります。';
   }
   // フォロー間隔は 最短 <= 最長 に保つ
   if (opt.key === 'followDelayMinMs' && value > all.followDelayMaxMs) {

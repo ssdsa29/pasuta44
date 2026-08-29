@@ -282,6 +282,10 @@ check('設定が空なら既定値のまま', cfg2.maxAccounts === 10);
 
 check('すべての設定項目が編集可能(スキーマに定義あり)', OPTION_SCHEMA.length >= 16);
 
+// 隠して実行は自動操作とみなされやすいので警告する
+check('隠して実行に警告', warnFor(byKey('headless'), true, {}) !== null);
+check('表示して実行には警告しない', warnFor(byKey('headless'), false, {}) === null);
+
 // BAN対策の「間」設定と警告
 check('アカウント切替の間隔が設定できる', byKey('betweenAccountsMs') !== undefined);
 check('コメントを開く間隔が設定できる', byKey('betweenRepliesMs') !== undefined);

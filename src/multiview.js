@@ -72,11 +72,10 @@ export function computeGrid(count, screen, columns = null) {
 async function openOne(account, statePath, pos, { headless = false } = {}) {
   const browser = await launchBrowser({
     headless,
+    // 自動操作の目印を消す指定は launchBrowser 側でまとめて行う
     args: [
       `--window-position=${pos.x},${pos.y}`,
       `--window-size=${pos.width},${pos.height}`,
-      // 自動操作であることを目立たせない
-      '--disable-blink-features=AutomationControlled',
     ],
   });
   const context = await browser.newContext({
