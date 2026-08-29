@@ -14,6 +14,13 @@ export const CONFIG = {
   // 1投稿あたり取得する最大リプライ数
   maxRepliesPerTweet: 10,
 
+  // 動画も保存するか
+  saveVideos: true,
+  // 1本あたりの動画サイズの上限(MB)。これを超える動画は記録だけ残して保存しない
+  maxVideoMB: 100,
+  // コメント(リプライ)を単体でも保存するか
+  saveComments: true,
+
   // 「おすすめ欄のアカウントを収集」で集めるアカウント数
   maxRecommendAccounts: 50,
 

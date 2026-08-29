@@ -3,6 +3,7 @@
 // (127.0.0.1 のみで待ち受け、同じPCからしかアクセスできません)。
 import { createServer } from 'node:http';
 import { readFile, readdir, stat } from 'node:fs/promises';
+import { createReadStream } from 'node:fs';
 import { existsSync } from 'node:fs';
 import { exec } from 'node:child_process';
 import { extname, join, resolve, sep } from 'node:path';
@@ -23,7 +24,13 @@ import { runJob, subscribe, getState, cancelJob, log } from './jobs.js';
 import { writeLog, readRecentLog, logPath } from './logger.js';
 
 const WEB_DIR = join(fileURLToPath(new URL('.', import.meta.url)), 'web');
-const MIME = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.json': 'application/json; charset=utf-8', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.gif': 'image/gif', '.csv': 'text/csv; charset=utf-8' };
+const MIME = {
+  '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8',
+  '.js': 'text/javascript; charset=utf-8', '.json': 'application/json; charset=utf-8',
+  '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+  '.webp': 'image/webp', '.gif': 'image/gif', '.csv': 'text/csv; charset=utf-8',
+  '.mp4': 'video/mp4', '.webm': 'video/webm', '.mov': 'video/quicktime', '.txt': 'text/plain; charset=utf-8',
+};
 
 let settings = loadSettings();
 applyOptions(settings, CONFIG);
@@ -405,7 +412,7 @@ async function handleApi(req, res, url) {
 
 // 収集結果(レポート・画像)を画面に表示するための配信。
 // 保存先フォルダの外は読ませない。
-async function serveOutputFile(res, urlPath) {
+async function serveOutputFile(req, res, urlPath) {
   const root = resolve(outputRoot());
   const rel = decodeURIComponent(urlPath.slice('/files/'.length));
   const target = resolve(join(root, rel));
@@ -413,13 +420,45 @@ async function serveOutputFile(res, urlPath) {
     res.writeHead(403).end('forbidden');
     return;
   }
+
+  const mime = MIME[extname(target).toLowerCase()] ?? 'application/octet-stream';
+  let size;
   try {
-    const data = await readFile(target);
-    res.writeHead(200, { 'Content-Type': MIME[extname(target).toLowerCase()] ?? 'application/octet-stream' });
-    res.end(data);
+    size = (await stat(target)).size;
   } catch {
     res.writeHead(404).end('not found');
+    return;
   }
+
+  // 動画の早送り(シーク)は Range リクエストで届くので、その範囲だけ返す
+  const range = req.headers.range;
+  const m = range && /^bytes=(\d*)-(\d*)$/.exec(range.trim());
+  if (m && size > 0) {
+    let start = m[1] === '' ? null : Number(m[1]);
+    let end = m[2] === '' ? null : Number(m[2]);
+    if (start === null && end !== null) {
+      start = Math.max(0, size - end); // 末尾から N バイト
+      end = size - 1;
+    } else {
+      start = start ?? 0;
+      end = end === null ? size - 1 : Math.min(end, size - 1);
+    }
+    if (Number.isNaN(start) || Number.isNaN(end) || start > end || start >= size) {
+      res.writeHead(416, { 'Content-Range': `bytes */${size}` }).end();
+      return;
+    }
+    res.writeHead(206, {
+      'Content-Type': mime,
+      'Content-Range': `bytes ${start}-${end}/${size}`,
+      'Accept-Ranges': 'bytes',
+      'Content-Length': end - start + 1,
+    });
+    createReadStream(target, { start, end }).pipe(res);
+    return;
+  }
+
+  res.writeHead(200, { 'Content-Type': mime, 'Content-Length': size, 'Accept-Ranges': 'bytes' });
+  createReadStream(target).pipe(res);
 }
 
 // 終了処理。ブラウザを閉じてログイン状態を保存してから落とす。
@@ -469,7 +508,7 @@ export async function startServer({ port = 0, open = true } = {}) {
     const url = new URL(req.url, 'http://127.0.0.1');
     try {
       if (url.pathname.startsWith('/api/')) return await handleApi(req, res, url);
-      if (url.pathname.startsWith('/files/')) return await serveOutputFile(res, url.pathname);
+      if (url.pathname.startsWith('/files/')) return await serveOutputFile(req, res, url.pathname);
 
       const file = url.pathname === '/' ? 'index.html' : url.pathname.replace(/^\//, '');
       const target = resolve(join(WEB_DIR, file));

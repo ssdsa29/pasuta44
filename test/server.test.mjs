@@ -34,7 +34,11 @@ check('画面にすべてのタブがある', ['ホーム', 'フォロー', '同
 console.log('\n[B] 状態の取得');
 let r = await api('/api/state');
 check('状態を取得できる', r.status === 200);
-check('設定項目がすべて含まれる', r.data.settings.options.length === 16);
+const keys = r.data.settings.options.map((o) => o.key);
+check('主要な設定項目がそろっている',
+  ['maxAccounts', 'fetchReplies', 'saveVideos', 'maxVideoMB', 'saveComments', 'maxFollowsPerRun',
+   'followDelayMinMs', 'maxParallelViews', 'headless', 'speedFactor'].every((k) => keys.includes(k)));
+check('設定項目に重複がない', new Set(keys).size === keys.length);
 check('実行中でない', r.data.job.running === false);
 check('アカウントは空から始まる', r.data.accounts.length === 0);
 
@@ -115,6 +119,28 @@ const es = await fetch(url + 'api/events', { headers: { Accept: 'text/event-stre
 check('進捗の配信につながる', es.status === 200 && es.headers.get('content-type').includes('event-stream'));
 es.body.cancel();
 
+
+console.log('\n[K] 動画の配信(早送り対応)');
+mkdirSync(join(work, 'output', 'run1', 'recommend', 'alice', 'videos'), { recursive: true });
+const videoPath = join(work, 'output', 'run1', 'recommend', 'alice', 'videos', 'a_1.mp4');
+writeFileSync(videoPath, Buffer.alloc(1000, 7)); // 1000バイトのダミー動画
+let vf = await fetch(url + 'files/run1/recommend/alice/videos/a_1.mp4');
+check('動画を配信できる', vf.status === 200);
+check('  形式が動画として伝わる', vf.headers.get('content-type') === 'video/mp4');
+check('  早送りできると伝える', vf.headers.get('accept-ranges') === 'bytes');
+vf.body?.cancel();
+
+vf = await fetch(url + 'files/run1/recommend/alice/videos/a_1.mp4', { headers: { Range: 'bytes=100-199' } });
+check('途中から再生(範囲指定)に応える', vf.status === 206);
+check('  返す範囲が正しい', vf.headers.get('content-range') === 'bytes 100-199/1000');
+check('  返すデータ量が正しい', (await vf.arrayBuffer()).byteLength === 100);
+
+vf = await fetch(url + 'files/run1/recommend/alice/videos/a_1.mp4', { headers: { Range: 'bytes=900-' } });
+check('末尾までの範囲指定に応える', vf.status === 206 && (await vf.arrayBuffer()).byteLength === 100);
+
+vf = await fetch(url + 'files/run1/recommend/alice/videos/a_1.mp4', { headers: { Range: 'bytes=5000-6000' } });
+check('おかしな範囲は正しく断る', vf.status === 416);
+vf.body?.cancel();
 
 console.log('\n[H] エラーの記録');
 const { writeLog, readRecentLog } = await import(new URL('../src/logger.js', import.meta.url).href);

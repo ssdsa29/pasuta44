@@ -271,6 +271,104 @@ check('設定が空なら既定値のまま', cfg2.maxAccounts === 10);
 
 check('すべての設定項目が編集可能(スキーマに定義あり)', OPTION_SCHEMA.length >= 16);
 
+
+// ---- 7.5 動画URLの取り出し -------------------------------------------------
+console.log('\n[7] 動画URLの取り出しとビューアのデータ作り');
+const { collectMediaFromJson, pickBestVariant } = await import('../src/media.js');
+
+
+// Xの実際の応答に近い形のデータ
+const sample = {
+  data: { threaded_conversation: { instructions: [{ entries: [
+    { content: { itemContent: { tweet_results: { result: {
+      rest_id: '1111',
+      legacy: {
+        full_text: '動画つき投稿',
+        extended_entities: { media: [{
+          type: 'video',
+          media_url_https: 'https://pbs.twimg.com/ext_tw_video_thumb/1111/img/thumb.jpg',
+          expanded_url: 'https://x.com/someone/status/1111/video/1',
+          video_info: {
+            duration_millis: 30500,
+            variants: [
+              { content_type: 'application/x-mpegURL', url: 'https://video.twimg.com/x.m3u8' },
+              { bitrate: 256000, content_type: 'video/mp4', url: 'https://video.twimg.com/low.mp4' },
+              { bitrate: 2176000, content_type: 'video/mp4', url: 'https://video.twimg.com/high.mp4' },
+              { bitrate: 832000, content_type: 'video/mp4', url: 'https://video.twimg.com/mid.mp4' },
+            ],
+          },
+        }] },
+      },
+    } } } } },
+    { content: { itemContent: { tweet_results: { result: {
+      rest_id: '2222',
+      legacy: { extended_entities: { media: [{
+        type: 'animated_gif',
+        media_url_https: 'https://pbs.twimg.com/tweet_video_thumb/2222.jpg',
+        expanded_url: 'https://x.com/someone/status/2222/video/1',
+        video_info: { variants: [{ bitrate: 0, content_type: 'video/mp4', url: 'https://video.twimg.com/gif.mp4' }] },
+      }] } },
+    } } } } },
+    // 画像だけの投稿(動画として拾ってはいけない)
+    { content: { itemContent: { tweet_results: { result: {
+      rest_id: '3333',
+      legacy: { extended_entities: { media: [{
+        type: 'photo', media_url_https: 'https://pbs.twimg.com/media/photo.jpg',
+        expanded_url: 'https://x.com/someone/status/3333/photo/1',
+      }] } },
+    } } } } },
+  ] }] } },
+};
+
+console.log('  [動画URLの抽出]');
+const found = collectMediaFromJson(sample);
+check('動画つき投稿を見つける', found.has('1111'));
+check('最高画質のmp4を選ぶ', found.get('1111')?.[0]?.url === 'https://video.twimg.com/high.mp4');
+check('  ビットレートも記録する', found.get('1111')?.[0]?.bitrate === 2176000);
+check('再生時間を記録する', found.get('1111')?.[0]?.durationMs === 30500);
+check('サムネイルを記録する', String(found.get('1111')?.[0]?.thumbnail).includes('thumb.jpg'));
+check('GIFも動画として扱う', found.get('2222')?.[0]?.type === 'gif');
+check('画像だけの投稿は動画にしない', !found.has('3333'));
+check('拾った投稿は2件だけ', found.size === 2);
+
+console.log('  [画質の選択]');
+check('mp4が無ければm3u8を返す', pickBestVariant([{content_type:'application/x-mpegURL',url:'a.m3u8'}])?.kind === 'hls');
+check('候補が無ければnull', pickBestVariant([]) === null);
+check('壊れた候補でも落ちない', pickBestVariant([null, {}, {content_type:'video/mp4'}]) === null);
+
+console.log('  [異常なデータでも落ちない]');
+check('null', collectMediaFromJson(null).size === 0);
+check('循環しない深いデータ', collectMediaFromJson({a:{b:{c:{d:{e:{}}}}}}).size === 0);
+const deep = {}; let cur = deep;
+for (let i=0;i<200;i++) { cur.next = {}; cur = cur.next; }
+check('極端に深い入れ子でも止まる', collectMediaFromJson(deep).size === 0);
+check('同じ動画を重複登録しない', (() => {
+  const m = collectMediaFromJson(sample); collectMediaFromJson(sample, m);
+  return m.get('1111').length === 1;
+})());
+
+
+// ビューア用データの組み立て
+const { buildViewData } = await import('../src/report.js');
+const view = buildViewData(
+  { recommend: [{ handle: 'alice', displayName: 'アリス', dirName: 'alice', tab: 'recommend', tweets: [
+    { tweetId: '1', url: 'u1', datetime: '2026-08-29T10:00:00Z', text: 'あ',
+      savedImages: ['a.jpg'], savedVideos: [{ file: 'v.mp4', type: 'video', durationMs: 5000 }], replies: [{}] },
+    { tweetId: '2', url: 'u2', datetime: '2026-08-29T09:00:00Z', text: 'い',
+      savedImages: [], savedVideos: [{ file: null, url: 'x.m3u8' }] },
+  ] }] },
+  [{ commentId: '9', parentTweetId: '1', parentUrl: 'u1', account: 'alice', handle: 'bob', displayName: 'ボブ',
+     text: 'こめんと', datetime: '2026-08-29T10:30:00Z', url: 'u9', dirName: 'alice', tab: 'recommend',
+     savedImages: ['c.jpg'], savedVideos: [] }]
+);
+check('投稿とコメントが同じ並びに入る', view.items.length === 3);
+check('コメントに印がつく', view.items.filter((i) => i.kind === 'comment').length === 1);
+check('画像の場所が正しく組み立てられる', view.items[0].images[0] === 'recommend/alice/images/a.jpg');
+check('動画の場所が正しく組み立てられる', view.items[0].videos[0].src === 'recommend/alice/videos/v.mp4');
+check('保存できなかった動画は数だけ記録', view.items[1].missingVideos === 1 && view.items[1].videos.length === 0);
+check('コメントは元の投稿とひも付く', view.items[2].onAccount === 'alice' && view.items[2].parentUrl === 'u1');
+check('アカウント一覧が作られる', view.accounts.length === 1 && view.accounts[0].handle === 'alice');
+
 // ---- 結果 ------------------------------------------------------------------
 console.log(`\n=== ${pass} 件成功 / ${fail} 件失敗 ===`);
 process.exit(fail === 0 ? 0 : 1);

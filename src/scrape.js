@@ -11,6 +11,7 @@ import { extractTweetsInPage, toOriginalImageUrl, imageExtension } from './extra
 import { generateReport } from './report.js';
 import { humanScroll, humanPause } from './humanize.js';
 import { isCancelled } from './cancel.js';
+import { attachMediaCapture, downloadVideo } from './media.js';
 import {
   safeGoto,
   waitForContent,
@@ -188,6 +189,8 @@ async function fetchReplies(page, tweet) {
         seen.add(item.tweetId);
         if (replies.length < CONFIG.maxRepliesPerTweet) {
           replies.push({
+            commentId: item.tweetId,
+            parentTweetId: tweet.tweetId,
             handle: item.handle,
             displayName: item.displayName,
             text: item.text,
@@ -238,7 +241,36 @@ async function downloadImage(url, destPath, { retries = 3 } = {}) {
   return false;
 }
 
-async function scrapeTab(page, tabKey, runDir, seenIds, failures) {
+// 1つの投稿(またはコメント)についた動画をまとめて保存する
+async function saveVideosFor(id, media, videosDir, prefix, failures, sourceUrl) {
+  const found = media?.get(id) ?? [];
+  const saved = [];
+  for (let i = 0; i < found.length; i++) {
+    const v = found[i];
+    if (v.kind !== 'mp4') {
+      // 生放送などの形式は、そのままでは保存できないのでURLだけ記録する
+      console.warn(`    動画を保存できない形式でした(URLのみ記録): ${sourceUrl}`);
+      failures.push({ type: 'video', reason: '保存できない形式(HLS)', url: v.url, tweetUrl: sourceUrl });
+      saved.push({ file: null, url: v.url, kind: v.kind, type: v.type, durationMs: v.durationMs, thumbnail: v.thumbnail });
+      continue;
+    }
+    const filename = `${prefix}_${i + 1}.mp4`;
+    const r = await downloadVideo(v.url, join(videosDir, filename), {
+      maxBytes: (CONFIG.maxVideoMB ?? 100) * 1024 * 1024,
+    });
+    if (r.ok) {
+      console.log(`    動画を保存しました: ${filename} (${Math.round((r.bytes / 1024 / 1024) * 10) / 10}MB)`);
+      saved.push({ file: filename, url: v.url, kind: 'mp4', type: v.type, durationMs: v.durationMs, thumbnail: v.thumbnail });
+    } else {
+      console.warn(`    動画を保存できませんでした(${r.reason}): ${sourceUrl}`);
+      failures.push({ type: 'video', reason: r.reason, url: v.url, tweetUrl: sourceUrl });
+      saved.push({ file: null, url: v.url, kind: 'mp4', type: v.type, durationMs: v.durationMs, thumbnail: v.thumbnail, skipped: true });
+    }
+  }
+  return saved;
+}
+
+async function scrapeTab(page, tabKey, runDir, seenIds, failures, media, comments) {
   console.log(`\n===== タブ「${tabKey}」の収集を開始 =====`);
   await safeGoto(page, 'https://x.com/home');
   const tabLabel = await switchToTab(page, tabKey);
@@ -255,7 +287,9 @@ async function scrapeTab(page, tabKey, runDir, seenIds, failures) {
     const dirName = sanitize(handle);
     const accountDir = join(tabDir, dirName);
     const imagesDir = join(accountDir, 'images');
+    const videosDir = join(accountDir, 'videos');
     mkdirSync(imagesDir, { recursive: true });
+    if (CONFIG.saveVideos) mkdirSync(videosDir, { recursive: true });
 
     const tweets = [];
     for (const tweet of account.tweets.values()) {
@@ -286,18 +320,50 @@ async function scrapeTab(page, tabKey, runDir, seenIds, failures) {
           text: tweet.text,
           imageUrls,
           savedImages,
+          savedVideos: [],
         };
 
         if (CONFIG.fetchReplies) {
+          // コメントは投稿を開いたときに取得する(このとき動画URLも一緒に集まる)
           record.replies = await fetchReplies(page, tweet);
+        }
+
+        // 動画の保存(投稿本体)
+        if (CONFIG.saveVideos) {
+          record.savedVideos = await saveVideosFor(tweet.tweetId, media, videosDir, `${tweet.tweetId}`, failures, tweet.url);
+        }
+
+        // コメントのメディアは、コメント自身に紐づけて保存する
+        if (CONFIG.fetchReplies) {
           for (let r = 0; r < record.replies.length; r++) {
             const reply = record.replies[r];
+            reply.savedImages = [];
             for (let i = 0; i < reply.images.length; i++) {
               const ext = imageExtension(reply.images[i]);
-              const filename = `${tweet.tweetId}_reply${r + 1}_${i + 1}.${ext}`;
+              const filename = `c${reply.commentId}_${i + 1}.${ext}`;
               if (await downloadImage(reply.images[i], join(imagesDir, filename))) {
-                savedImages.push(filename);
+                reply.savedImages.push(filename);
               }
+            }
+            reply.savedVideos = CONFIG.saveVideos
+              ? await saveVideosFor(reply.commentId, media, videosDir, `c${reply.commentId}`, failures, reply.url)
+              : [];
+            if (CONFIG.saveComments) {
+              comments.push({
+                commentId: reply.commentId,
+                parentTweetId: tweet.tweetId,
+                parentUrl: tweet.url,
+                account: handle,
+                handle: reply.handle,
+                displayName: reply.displayName,
+                text: reply.text,
+                datetime: reply.datetime,
+                url: reply.url,
+                dirName,
+                tab: tabKey,
+                savedImages: reply.savedImages,
+                savedVideos: reply.savedVideos,
+              });
             }
           }
         }
@@ -349,6 +415,7 @@ export async function runScrape({
   const seenIds = loadSeenIds(seenPath);
   const dataByTab = {};
   const failures = [];
+  const comments = []; // コメント単体の記録
   const remaining = [...tabs];
   let reloginLeft = onSessionExpired ? 1 : 0; // 自動再ログインは1回まで
 
@@ -364,6 +431,8 @@ export async function runScrape({
       viewport: { width: 1280, height: 900 },
     });
     const page = await context.newPage();
+    // ページの通信から動画URLを拾い続ける
+    const media = CONFIG.saveVideos ? attachMediaCapture(page) : null;
     let sessionExpired = false;
 
     try {
@@ -374,7 +443,7 @@ export async function runScrape({
         }
         const tabKey = remaining[0];
         try {
-          dataByTab[tabKey] = await scrapeTab(page, tabKey, runDir, seenIds, failures);
+          dataByTab[tabKey] = await scrapeTab(page, tabKey, runDir, seenIds, failures, media, comments);
         } catch (err) {
           if (err instanceof SessionExpiredError) throw err;
           // このタブは失敗しても、他のタブと既に集めた分は活かす
@@ -394,6 +463,7 @@ export async function runScrape({
         throw err;
       }
     } finally {
+      media?.detach();
       saveSeenIds(seenIds, seenPath);
       if (!sessionExpired) await context.storageState({ path: statePath }).catch(() => {});
       await browser.close();
@@ -407,7 +477,10 @@ export async function runScrape({
     }
   }
 
-  const { htmlPath, csvPath } = generateReport(runDir, dataByTab);
+  if (CONFIG.saveComments && comments.length) {
+    writeFileSync(join(runDir, 'comments.json'), JSON.stringify(comments, null, 2), 'utf8');
+  }
+  const { htmlPath, csvPath } = generateReport(runDir, dataByTab, comments);
   const totalAccounts = Object.values(dataByTab).reduce((n, a) => n + a.length, 0);
 
   // 失敗があれば記録に残す(あとで確認・再取得できるように)
@@ -419,11 +492,12 @@ export async function runScrape({
   console.log(`  結果フォルダ : ${runDir}`);
   console.log(`  レポート     : ${htmlPath} (ブラウザで開けます)`);
   console.log(`  CSV          : ${csvPath}`);
+  if (comments.length) console.log(`  コメント     : ${join(runDir, 'comments.json')}(${comments.length} 件)`);
   if (failures.length > 0) {
     const counts = failures.reduce((m, f) => ((m[f.type] = (m[f.type] || 0) + 1), m), {});
     console.log(`  取得できなかったもの: ${JSON.stringify(counts)} → ${join(runDir, 'errors.json')}`);
   }
-  return { runDir, htmlPath, csvPath, totalAccounts, failures };
+  return { runDir, htmlPath, csvPath, totalAccounts, failures, comments: comments.length };
 }
 
 // 直接実行されたときだけCLIとして動く
