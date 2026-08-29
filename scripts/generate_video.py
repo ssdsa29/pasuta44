@@ -74,12 +74,19 @@ def patch_workflow(wf, image_name, prompt, width, height, length, steps, fps):
         if cls == "CLIPTextEncode" and "positive" in title:
             inputs["text"] = prompt
         if "width" in inputs and "height" in inputs:
-            inputs["width"] = width
-            inputs["height"] = height
+            if cls == "HunyuanVideo15LatentUpscaleWithModel":
+                # 超解像の出力解像度。基準の1.5倍（8の倍数に丸める）
+                inputs["width"] = (int(width * 1.5) // 8) * 8
+                inputs["height"] = (int(height * 1.5) // 8) * 8
+            else:
+                inputs["width"] = width
+                inputs["height"] = height
         if "length" in inputs:
             inputs["length"] = length
         if cls == "BasicScheduler" and "steps" in inputs:
-            inputs["steps"] = steps
+            # 超解像側のスケジューラは公式既定(8step)のまま
+            if "sr" not in title:
+                inputs["steps"] = steps
         if cls == "CreateVideo" and "fps" in inputs:
             inputs["fps"] = fps
         for key in ("seed", "noise_seed"):
