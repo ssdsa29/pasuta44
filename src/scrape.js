@@ -8,7 +8,7 @@ import { pathToFileURL } from 'node:url';
 import { CONFIG } from './config.js';
 import { extractTweetsInPage, toOriginalImageUrl, imageExtension } from './extract.js';
 import { generateReport } from './report.js';
-import { humanScroll, humanPause } from './humanize.js';
+import { humanScroll, humanPause, jitterSleep } from './humanize.js';
 import { isCancelled } from './cancel.js';
 import { attachMediaCapture, downloadVideo } from './media.js';
 import { launchBrowser } from './browser.js';
@@ -324,6 +324,8 @@ async function scrapeTab(page, tabKey, runDir, seenIds, failures, media, comment
         };
 
         if (CONFIG.fetchReplies) {
+          // 詳細ページを次々に開くのは自動化とみなされやすいので、開く前に少し間を置く
+          await jitterSleep(CONFIG.betweenRepliesMs);
           // コメントは投稿を開いたときに取得する(このとき動画URLも一緒に集まる)
           record.replies = await fetchReplies(page, tweet);
         }
@@ -382,6 +384,9 @@ async function scrapeTab(page, tabKey, runDir, seenIds, failures, media, comment
     writeFileSync(join(accountDir, 'tweets.json'), JSON.stringify(accountData, null, 2), 'utf8');
     summary.push({ handle, displayName: account.displayName, tweetCount: tweets.length });
     tabData.push(accountData);
+
+    // 次のアカウントへ移る前に、人間らしい「間」を置く(まとめて一気に処理しない)
+    if (!isCancelled()) await jitterSleep(CONFIG.betweenAccountsMs);
   }
 
   writeFileSync(join(tabDir, 'summary.json'), JSON.stringify(summary, null, 2), 'utf8');
@@ -450,6 +455,8 @@ export async function runScrape({
           dataByTab[tabKey] = dataByTab[tabKey] ?? [];
         }
         remaining.shift();
+        // 次のタブに移る前にも少し間を置く
+        if (remaining.length > 0 && !isCancelled()) await jitterSleep(CONFIG.betweenAccountsMs);
       }
     } catch (err) {
       if (err instanceof SessionExpiredError && reloginLeft > 0) {

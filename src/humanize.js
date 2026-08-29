@@ -14,6 +14,14 @@ export function randInt(min, max) {
   return Math.floor(min + Math.random() * (max - min + 1));
 }
 
+// 目安ミリ秒を中心に±40%ばらつかせて待つ(アカウント間・詳細ページ間の「間」用)。
+// 待ち時間は「動作の速さ」倍率も反映する。0 以下なら待たない。
+export async function jitterSleep(ms) {
+  const base = Number(ms) || 0;
+  if (base <= 0) return;
+  await paceSleep(randInt(Math.round(base * 0.6), Math.round(base * 1.4)));
+}
+
 // 人間らしい短い間(既定 0.4〜1.6秒)。ときどき長めに考え込む。
 export async function humanPause(minMs = 400, maxMs = 1600) {
   let ms = randInt(minMs, maxMs);

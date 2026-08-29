@@ -282,6 +282,18 @@ check('設定が空なら既定値のまま', cfg2.maxAccounts === 10);
 
 check('すべての設定項目が編集可能(スキーマに定義あり)', OPTION_SCHEMA.length >= 16);
 
+// BAN対策の「間」設定と警告
+check('アカウント切替の間隔が設定できる', byKey('betweenAccountsMs') !== undefined);
+check('コメントを開く間隔が設定できる', byKey('betweenRepliesMs') !== undefined);
+check('短すぎる収集間隔に警告', warnFor(byKey('betweenRepliesMs'), 1000, {}) !== null);
+check('十分な収集間隔には警告しない', warnFor(byKey('betweenRepliesMs'), 6000, {}) === null);
+
+// 「間」を作るヘルパー: 0 なら待たずにすぐ返る
+const { jitterSleep } = await import('../src/humanize.js');
+const t0 = Date.now();
+await jitterSleep(0);
+check('間隔0なら待たない', Date.now() - t0 < 50);
+
 
 // ---- 7.5 動画URLの取り出し -------------------------------------------------
 console.log('\n[7] 動画URLの取り出しとビューアのデータ作り');

@@ -74,6 +74,8 @@ export const OPTION_SCHEMA = [
   { key: 'keywords', group: '収集', label: 'キーワード絞り込み', type: 'keywords' },
   { key: 'maxRecommendAccounts', group: '収集', label: 'おすすめ欄から集めるアカウント数', type: 'number', min: 1, max: 500 },
   { key: 'maxScrolls', group: '収集', label: '最大スクロール回数', type: 'number', min: 1, max: 500 },
+  { key: 'betweenAccountsMs', group: '収集', label: 'アカウントを切り替える間隔(秒)', type: 'number', min: 0, max: 600, unit: 'sec', warnUnder: 3 },
+  { key: 'betweenRepliesMs', group: '収集', label: 'コメントを開く間隔(秒)', type: 'number', min: 0, max: 600, unit: 'sec', warnUnder: 2 },
 
   // --- フォロー ---
   { key: 'maxFollowsPerRun', group: 'フォロー', label: '1回にフォローする上限(件)', type: 'number', min: 1, max: 400, warnOver: 50 },
