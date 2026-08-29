@@ -10,7 +10,7 @@ import { extname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { CONFIG } from './config.js';
 import { login } from './login.js';
-import { runScrape } from './scrape.js';
+import { runScrape, closeOpenedBrowsers } from './scrape.js';
 import { pickFolderDialog } from './pickFolder.js';
 import { exportFollowing, collectRecommendAccounts, followAccounts } from './follows.js';
 import { saveAccountList, listSavedFiles, readHandles } from './lists.js';
@@ -495,6 +495,8 @@ async function shutdown(reason, code = 0) {
     // 同時表示のウィンドウはログイン状態を保存してから閉じる
     await closeAll(multiViews);
     multiViews = [];
+    // 収集後に開いたままにしていたブラウザも片付ける
+    await closeOpenedBrowsers();
   } catch (err) {
     writeLog(`終了処理でエラー: ${cleanError(err)}`, 'warn');
   }

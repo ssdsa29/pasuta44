@@ -309,6 +309,19 @@ check('設定が空なら既定値のまま', cfg2.maxAccounts === 10);
 
 check('すべての設定項目が編集可能(スキーマに定義あり)', OPTION_SCHEMA.length >= 16);
 
+// スクロールの振れ幅・ブラウザを開いたままにする設定
+check('スクロールの振れ幅が設定できる', byKey('scrollVariance') !== undefined);
+check('振れ幅は0を受け付ける(一定のリズム)', parseOption(byKey('scrollVariance'), '0').value === 0);
+check('振れ幅は範囲外を拒否する', parseOption(byKey('scrollVariance'), '3').ok === false);
+check('ブラウザを開いたままにする設定がある', byKey('keepBrowserOpen') !== undefined);
+
+// 手でフォローした相手をXの返事から取り出す
+const { findScreenName } = await import('../src/scrape.js');
+check('フォロー相手の名前を取り出せる',
+  findScreenName({ data: { user: { result: { legacy: { screen_name: 'someone' } } } } }) === 'someone');
+check('名前が無ければ null', findScreenName({ data: { nothing: 1 } }) === null);
+check('壊れたデータでも落ちない', findScreenName(null) === null);
+
 // 隠して実行は自動操作とみなされやすいので警告する
 check('隠して実行に警告', warnFor(byKey('headless'), true, {}) !== null);
 check('表示して実行には警告しない', warnFor(byKey('headless'), false, {}) === null);

@@ -6,7 +6,7 @@
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-const TAB_LABELS = { recommend: 'おすすめ', following: 'フォロー中' };
+const TAB_LABELS = { recommend: 'おすすめ', following: 'フォロー中', manual: '自分で見た' };
 
 function csvCell(s) {
   return `"${String(s ?? '').replaceAll('"', '""')}"`;
@@ -183,9 +183,10 @@ function renderHtml(view) {
       <option value="comment">コメントだけ</option>
     </select>
     <select id="tab">
-      <option value="">両方の欄</option>
+      <option value="">すべての欄</option>
       <option value="recommend">おすすめ欄</option>
       <option value="following">フォロー欄</option>
+      <option value="manual">自分で見た</option>
     </select>
     <select id="sort">
       <option value="new">新しい順</option>

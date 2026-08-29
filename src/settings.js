@@ -89,6 +89,8 @@ export const OPTION_SCHEMA = [
   { key: 'viewColumns', group: '表示・動作', label: 'タイル配置の列数', type: 'columns' },
   { key: 'headless', group: '表示・動作', label: 'ブラウザを隠して実行する', type: 'boolean', warnWhenTrue: true },
   { key: 'speedFactor', group: '表示・動作', label: '動作の速さ(1.0=標準/大きいほど慎重)', type: 'decimal', min: 0.2, max: 5 },
+  { key: 'scrollVariance', group: '表示・動作', label: 'スクロールの振れ幅(0=一定/1.0=標準/大きいほど気まぐれ)', type: 'decimal', min: 0, max: 2 },
+  { key: 'keepBrowserOpen', group: '表示・動作', label: '終わってもブラウザを開いたままにする', type: 'boolean' },
 ];
 
 // 保存されている値を画面表示用の文字列にする

@@ -38,6 +38,16 @@ function sanitize(name) {
   return name.replace(/[^\w.-]/g, '_');
 }
 
+// 「開いたまま」にしたブラウザ。アプリ終了時にまとめて片付ける。
+export const openedBrowsers = new Set();
+
+export async function closeOpenedBrowsers() {
+  for (const b of [...openedBrowsers]) {
+    await b.close().catch(() => {});
+    openedBrowsers.delete(b);
+  }
+}
+
 // 過去の実行で取得済みの投稿IDを読み書きする(差分取得用)
 function loadSeenIds(seenPath) {
   if (!CONFIG.skipSeen) return new Set();
@@ -296,6 +306,105 @@ async function saveVideosFor(id, media, videosDir, prefix, failures, sourceUrl) 
   return saved;
 }
 
+// 入れ子になったデータの中から、最初に見つかったアカウント名(screen_name)を取り出す
+export function findScreenName(data, depth = 0) {
+  if (!data || typeof data !== 'object' || depth > 8) return null;
+  if (typeof data.screen_name === 'string') return data.screen_name;
+  for (const value of Object.values(data)) {
+    if (value && typeof value === 'object') {
+      const found = findScreenName(value, depth + 1);
+      if (found) return found;
+    }
+  }
+  return null;
+}
+
+// 収集が終わったあと、ブラウザを開いたままにして「あなたの操作」を記録する。
+// あなたがスクロールして見た投稿を、そのつど画像とスクリーンショットで残し、
+// フォローした相手も控えておく。ブラウザを閉じるか「中止」で終わる。
+async function watchManual(page, runDir, seenIds, failures, followed) {
+  const tabKey = 'manual';
+  const tabDir = join(runDir, tabKey);
+  const byHandle = new Map(); // handle -> accountData
+  const recorded = new Set();
+
+  console.log('\n===== 見守りを始めます =====');
+  console.log('ブラウザはこのまま操作できます。見た投稿と保存した画像を記録します。');
+  console.log('終わるときは、ブラウザを閉じるか、画面の「中止」を押してください。');
+
+  while (!isCancelled() && !page.isClosed()) {
+    let tweets = [];
+    try {
+      tweets = await page.evaluate(extractTweetsInPage);
+    } catch {
+      if (page.isClosed()) break;
+      await sleep(1500);
+      continue;
+    }
+
+    for (const tweet of tweets) {
+      if (isCancelled() || page.isClosed()) break;
+      if (recorded.has(tweet.tweetId)) continue;
+      recorded.add(tweet.tweetId);
+      if (seenIds.has(tweet.tweetId)) continue;
+      if (!matchesKeywords(tweet.text)) continue;
+
+      try {
+        const dirName = sanitize(tweet.handle);
+        const imagesDir = join(tabDir, dirName, 'images');
+        mkdirSync(imagesDir, { recursive: true });
+
+        const shot = CONFIG.saveScreenshots
+          ? await screenshotTweetCard(page, tweet.tweetId, tweet.handle, tabDir)
+          : null;
+
+        const imageUrls = tweet.images.map(toOriginalImageUrl);
+        const savedImages = [];
+        for (let i = 0; i < imageUrls.length; i++) {
+          const filename = `${tweet.tweetId}_${i + 1}.${imageExtension(tweet.images[i])}`;
+          if (await downloadImage(imageUrls[i], join(imagesDir, filename))) savedImages.push(filename);
+          else failures.push({ type: 'image', url: imageUrls[i], tweetUrl: tweet.url });
+        }
+
+        if (!byHandle.has(tweet.handle)) {
+          byHandle.set(tweet.handle, {
+            handle: tweet.handle, displayName: tweet.displayName, dirName, tab: tabKey, tweets: [],
+          });
+        }
+        byHandle.get(tweet.handle).tweets.push({
+          tweetId: tweet.tweetId,
+          url: tweet.url,
+          datetime: tweet.datetime,
+          screenshot: shot,
+          imageUrls,
+          savedImages,
+          savedVideos: [],
+        });
+        seenIds.add(tweet.tweetId);
+        console.log(`  [見守り] @${tweet.handle} の投稿を記録しました（${savedImages.length} 枚）`);
+
+        // 記録した分をそのつど書き出す(途中で閉じても残るように)
+        const acc = byHandle.get(tweet.handle);
+        writeFileSync(join(tabDir, dirName, 'tweets.json'), JSON.stringify(acc, null, 2), 'utf8');
+      } catch (err) {
+        if (page.isClosed()) break;
+        failures.push({ type: 'manual', url: tweet.url, error: cleanError(err) });
+      }
+    }
+
+    // 見ている邪魔をしないよう、少し待ってから次を確認する
+    await sleep(2000);
+  }
+
+  if (followed.size) {
+    mkdirSync(tabDir, { recursive: true });
+    writeFileSync(join(tabDir, 'followed.json'), JSON.stringify([...followed], null, 2), 'utf8');
+    console.log(`  [見守り] あなたがフォローしたアカウント ${followed.size} 件を記録しました。`);
+  }
+  console.log('見守りを終わります。');
+  return [...byHandle.values()];
+}
+
 async function scrapeTab(page, tabKey, runDir, seenIds, failures, media, comments) {
   console.log(`\n===== タブ「${tabKey}」の収集を開始 =====`);
   await safeGoto(page, 'https://x.com/home');
@@ -469,6 +578,20 @@ export async function runScrape({
     const media = CONFIG.saveVideos ? attachMediaCapture(page) : null;
     let sessionExpired = false;
 
+    // あなたが手でフォローした相手を控えておく。
+    // フォロー時の通信の「返事」に相手のアカウント名が入っているので、そこから拾う。
+    const followed = new Set();
+    page.on('response', async (res) => {
+      if (!/CreateFriendship|\/friendships\/create/i.test(res.url())) return;
+      try {
+        const body = await res.json();
+        const name = findScreenName(body);
+        if (name) followed.add(name);
+      } catch {
+        // 読み取れなくても操作の邪魔はしない
+      }
+    });
+
     try {
       while (remaining.length > 0) {
         if (isCancelled()) {
@@ -489,6 +612,11 @@ export async function runScrape({
         // 次のタブに移る前にも少し間を置く
         if (remaining.length > 0 && !isCancelled()) await jitterSleep(CONFIG.betweenAccountsMs);
       }
+
+      // 収集が終わってもブラウザを開いたままにして、あなたの操作を記録する
+      if (CONFIG.keepBrowserOpen && !CONFIG.headless && !isCancelled() && !page.isClosed()) {
+        dataByTab.manual = await watchManual(page, runDir, seenIds, failures, followed);
+      }
     } catch (err) {
       if (err instanceof SessionExpiredError && reloginLeft > 0) {
         sessionExpired = true;
@@ -502,7 +630,16 @@ export async function runScrape({
       media?.detach();
       saveSeenIds(seenIds, seenPath);
       if (!sessionExpired) await context.storageState({ path: statePath }).catch(() => {});
-      await browser.close();
+      // 「開いたままにする」設定のときは閉じない(そのまま自分で操作できる)。
+      // 閉じ忘れにならないよう、アプリ終了時に片付けられるよう控えておく。
+      const keepOpen = CONFIG.keepBrowserOpen && !CONFIG.headless && !sessionExpired;
+      if (keepOpen && browser.isConnected()) {
+        openedBrowsers.add(browser);
+        browser.on('disconnected', () => openedBrowsers.delete(browser));
+        console.log('\nブラウザは開いたままにしています。そのままご覧いただけます。');
+      } else {
+        await browser.close().catch(() => {});
+      }
     }
 
     if (sessionExpired) {
