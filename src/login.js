@@ -9,7 +9,7 @@ import { authStatePathFor, getActiveAccount, loadSettings } from './settings.js'
 import { humanType, humanPause, sleep } from './humanize.js';
 import { launchBrowser } from './browser.js';
 
-const LOGIN_TIMEOUT_MS = 5 * 60 * 1000; // 手動ログインは5分以内に
+const LOGIN_TIMEOUT_MS = 15 * 60 * 1000; // 手動ログインは15分以内に(2段階認証や確認画面に時間がかかるため)
 
 // ログイン完了(ホームのタイムライン表示)を待つ
 async function waitForLoggedIn(page, timeout) {
